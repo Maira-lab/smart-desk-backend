@@ -3006,7 +3006,9 @@ Please review the report in your dashboard.`;
                 try {
                     const path = require('path');
                     const fs = require('fs');
-                    const uploadDir = path.join(__dirname, '../uploads/attachments');
+                    //const uploadDir = path.join(__dirname, '../uploads/attachments');
+                    const uploadBase = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..');
+const uploadDir = path.join(uploadBase, 'uploads', 'attachments');  
                     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
                     
                     const safeName = Date.now() + '-' + String(attachedFile.originalname).replace(/[^a-zA-Z0-9.\-]/g, '_');

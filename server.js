@@ -64,6 +64,10 @@ class Server {
         //  Static files serve karo
         this.app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
         this.app.use('/uploads', express.static(path.join(__dirname, 'src', 'uploads')));
+
+        if (process.env.VERCEL) {
+    this.app.use('/uploads', express.static('/tmp/uploads'));
+}
         
         // Logging middleware
         this.app.use((req, res, next) => {
@@ -631,6 +635,15 @@ class Server {
 }
 
 const server = new Server();
-server.start();
+
+//  Vercel (serverless) par listen nahi karna, local par normal start
+if (require.main === module) {
+    server.start();
+}
 
 module.exports = server;
+
+//const server = new Server();
+//server.start();
+
+//module.exports = server;
