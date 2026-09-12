@@ -1,0 +1,10 @@
+{
+  "android": {
+    "package": "com.myralab.smartdeskbackend"
+  },
+  "extra": {
+    "eas": {
+      "projectId": "f4d055e4-f0a3-4063-9746-4d8c9006beca"
+    }
+  }
+}
