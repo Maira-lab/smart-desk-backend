@@ -635,15 +635,6 @@ class Server {
 }
 
 const server = new Server();
-
-//  Vercel (serverless) par listen nahi karna, local par normal start
-if (require.main === module) {
-    server.start();
-}
+server.start();
 
 module.exports = server;
-
-//const server = new Server();
-//server.start();
-
-//module.exports = server;

@@ -852,8 +852,16 @@ class TeacherController {
             let savedFileUrl = null;
             if (attachedFile) {
                 try {
-                    const uploadDir = path.join(__dirname, '../uploads/attachments');
-                    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+                    const uploadBase = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..');
+const uploadDir = path.join(uploadBase, 'uploads', 'attachments');
+try {
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+} catch (e) {
+    console.warn('uploads dir warning:', e.message);
+}
+                    //const uploadDir = path.join(__dirname, '../uploads/attachments');
+                    //if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
                     const safeOriginal = String(attachedFile.originalname).replace(/[^a-zA-Z0-9.\-]/g, '_');
                     const savedFileName = Date.now() + '-' + safeOriginal;
                     fs.writeFileSync(path.join(uploadDir, savedFileName), attachedFile.buffer);

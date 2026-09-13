@@ -3006,9 +3006,7 @@ Please review the report in your dashboard.`;
                 try {
                     const path = require('path');
                     const fs = require('fs');
-                    //const uploadDir = path.join(__dirname, '../uploads/attachments');
-                    const uploadBase = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..');
-const uploadDir = path.join(uploadBase, 'uploads', 'attachments');  
+                    const uploadDir = path.join(__dirname, '../uploads/attachments');
                     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
                     
                     const safeName = Date.now() + '-' + String(attachedFile.originalname).replace(/[^a-zA-Z0-9.\-]/g, '_');
@@ -3709,7 +3707,10 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         const emailPayload = {
                             to: senderInfo[0].email,
                             subject: `💬 Reply from Coordinator`,
-                            html: `<h2>💬 New Reply Received</h2>
+                             message: cleanMessage,          //  emailService yeh field parhta hai (undefined ka hal)
+                             senderName: coordinatorName,    // ✅ template mein naam ke liye
+                             replyMessage: cleanMessage, 
+                                                        html: `<h2>💬 New Reply Received</h2>
                                    <p><b>${coordinatorName}</b> has replied to your notification.</p>
                                    <div style="background:#f8fafc;padding:16px;border-radius:8px;margin:16px 0;">
                                      <p><b>Message:</b></p>
