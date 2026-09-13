@@ -216,6 +216,50 @@ class AuthController {
     // 3. REGISTER CONTROLLER - STEP 4: ID CARD + PROFILE PHOTO + VALIDATION
     async register(req, res) {
         try {
+                            // ✅ PERMANENT FIX: JSON + base64 registration ko multer-style files mein convert karo
+            // (ID card requirement barqarar rahegi — file ab har soorat mein majood hogi)
+            if (!req.files && req.body && (req.body.idCardBase64 || req.body.profilePhotoBase64)) {
+                const path = require('path');
+                const fs = require('fs');
+                const uploadDir = path.join(__dirname, '../uploads/registrations');
+                if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+                req.files = req.files || {};
+
+                if (req.body.idCardBase64) {
+                    const buf = Buffer.from(String(req.body.idCardBase64), 'base64');
+                    const safeName = Date.now() + '-' + String(req.body.idCardName || 'idcard.jpg').replace(/[^a-zA-Z0-9.\-]/g, '_');
+                    const filePath = path.join(uploadDir, safeName);
+                    fs.writeFileSync(filePath, buf);
+                    req.files.idCard = [{
+                        fieldname: 'idCard',
+                        originalname: safeName,
+                        filename: safeName,
+                        mimetype: 'image/jpeg',
+                        buffer: buf,
+                        size: buf.length,
+                        path: filePath
+                    }];
+                    console.log('✅ idCard base64 → file:', safeName);
+                }
+
+                if (req.body.profilePhotoBase64) {
+                    const buf2 = Buffer.from(String(req.body.profilePhotoBase64), 'base64');
+                    const safeName2 = Date.now() + '-' + String(req.body.profilePhotoName || 'photo.jpg').replace(/[^a-zA-Z0-9.\-]/g, '_');
+                    const filePath2 = path.join(uploadDir, safeName2);
+                    fs.writeFileSync(filePath2, buf2);
+                    req.files.profilePhoto = [{
+                        fieldname: 'profilePhoto',
+                        originalname: safeName2,
+                        filename: safeName2,
+                        mimetype: 'image/jpeg',
+                        buffer: buf2,
+                        size: buf2.length,
+                        path: filePath2
+                    }];
+                    console.log('✅ profilePhoto base64 → file:', safeName2);
+                }
+            }
             const {
                 email,
                 password,
@@ -253,6 +297,30 @@ class AuthController {
                     success: false,
                     error: 'ID Card / Admission Letter is required for registration'
                 });
+            }
+                        // ✅ FormData-free registration: base64 images ko multer-style files bana do
+            if (!req.files && req.body && (req.body.idCardBase64 || req.body.profilePhotoBase64)) {
+                req.files = req.files || {};
+                if (req.body.idCardBase64) {
+                    const buf = Buffer.from(String(req.body.idCardBase64), 'base64');
+                    req.files.idCard = [{
+                        fieldname: 'idCard',
+                        originalname: req.body.idCardName || 'idcard.jpg',
+                        mimetype: 'image/jpeg',
+                        buffer: buf,
+                        size: buf.length
+                    }];
+                }
+                if (req.body.profilePhotoBase64) {
+                    const buf = Buffer.from(String(req.body.profilePhotoBase64), 'base64');
+                    req.files.profilePhoto = [{
+                        fieldname: 'profilePhoto',
+                        originalname: req.body.profilePhotoName || 'photo.jpg',
+                        mimetype: 'image/jpeg',
+                        buffer: buf,
+                        size: buf.length
+                    }];
+                }
             }
 
             //  Layer 2: Duplicate Email Check

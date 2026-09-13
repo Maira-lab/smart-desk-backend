@@ -3,6 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 //  IMPORT ROUTES
@@ -59,13 +60,115 @@ class Server {
             origin: process.env.CLIENT_URL || 'http://localhost:3000',
             credentials: true
         }));
-        this.app.use(express.json());
-        this.app.use(express.urlencoded({ extended: true }));
-        
-        //  Static files serve karo
-        this.app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-        this.app.use('/uploads', express.static(path.join(__dirname, 'src', 'uploads')));
+        this.app.use(express.json({ limit: '50mb' }));
+        this.app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+                // ✅ GLOBAL BASE64 → MULTER-STYLE FILES (register se PEHLE chalta hai)
+        this.app.use('/api/auth/register', (req, res, next) => {
+            try {
+                if (req.body && !req.files && (req.body.idCardBase64 || req.body.profilePhotoBase64)) {
+                    const path = require('path');
+                    const fs = require('fs');
+                    const uploadDir = path.join(__dirname, 'uploads', 'registrations');
+                    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+                    req.files = req.files || {};
+
+                    if (req.body.idCardBase64) {
+                        const buf = Buffer.from(String(req.body.idCardBase64), 'base64');
+                        const safeName = Date.now() + '-' + String(req.body.idCardName || 'idcard.jpg').replace(/[^a-zA-Z0-9.\-]/g, '_');
+                        const filePath = path.join(uploadDir, safeName);
+                        fs.writeFileSync(filePath, buf);
+                        req.files.idCard = [{
+                            fieldname: 'idCard', originalname: safeName, filename: safeName,
+                            mimetype: 'image/jpeg', buffer: buf, size: buf.length, path: filePath
+                        }];
+                        console.log('✅ [GLOBAL] idCard base64 → file:', safeName, buf.length, 'bytes');
+                    }
+
+                    if (req.body.profilePhotoBase64) {
+                        const buf = Buffer.from(String(req.body.profilePhotoBase64), 'base64');
+                        const safeName = Date.now() + '-' + String(req.body.profilePhotoName || 'photo.jpg').replace(/[^a-zA-Z0-9.\-]/g, '_');
+                        const filePath = path.join(uploadDir, safeName);
+                        fs.writeFileSync(filePath, buf);
+                        req.files.profilePhoto = [{
+                            fieldname: 'profilePhoto', originalname: safeName, filename: safeName,
+                            mimetype: 'image/jpeg', buffer: buf, size: buf.length, path: filePath
+                        }];
+                        console.log('✅ [GLOBAL] profilePhoto base64 → file:', safeName, buf.length, 'bytes');
+                    }
+                }
+            } catch (e) {
+                console.error('⚠️ base64 middleware error:', e.message);
+            }
+            next();
+        });
+        
+                // Static files - uploads
+        this.app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+        this.app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
+        
+        // Agar uploads folder src ke andar hai to yeh bhi:
+        this.app.use('/uploads', express.static(path.join(__dirname, 'src', 'uploads')));
+        this.app.use('/api/uploads', express.static(path.join(__dirname, 'src', 'uploads')));
+                // ✅ SMART UPLOADS FALLBACK: file ko har possible folder mein dhundo
+        const serveUploadFallback = (req, res, next) => {
+            try {
+                const rel = req.path.replace(/^\/+/, '');        // e.g. idcards/x.jpeg
+                const fileName = path.basename(rel);
+
+                // 1️⃣ Direct paths check karo
+                const direct = [
+                    path.join(__dirname, 'uploads', rel),
+                    path.join(__dirname, 'src', 'uploads', rel),
+                    path.join(__dirname, rel),
+                    path.join(__dirname, 'src', rel),
+                ];
+                for (const p of direct) {
+                    if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+                        console.log('✅ [uploads-fallback] serving:', p);
+                        return res.sendFile(p);
+                    }
+                }
+
+                // 2️⃣ Recursive search (filename se poori backend mein dhundo)
+                const roots = [
+                    path.join(__dirname, 'uploads'),
+                    path.join(__dirname, 'src', 'uploads'),
+                    path.join(__dirname, 'src'),
+                    __dirname,
+                ];
+                const findFile = (dir, depth) => {
+                    if (depth > 5) return null;
+                    let entries = [];
+                    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return null; }
+                    for (const entry of entries) {
+                        if (entry.name === 'node_modules') continue;
+                        const full = path.join(dir, entry.name);
+                        if (entry.isDirectory()) {
+                            const found = findFile(full, depth + 1);
+                            if (found) return found;
+                        } else if (entry.name === fileName) {
+                            return full;
+                        }
+                    }
+                    return null;
+                };
+                for (const root of roots) {
+                    const found = findFile(root, 0);
+                    if (found) {
+                        console.log('✅ [uploads-fallback] found via search:', found);
+                        return res.sendFile(found);
+                    }
+                }
+
+                console.warn('⚠️ [uploads-fallback] NOT FOUND:', fileName);
+                return res.status(404).json({ success: false, error: 'File not found: ' + fileName });
+            } catch (e) {
+                return next(e);
+            }
+        };
+        this.app.use('/uploads', serveUploadFallback);
+        this.app.use('/api/uploads', serveUploadFallback);
         if (process.env.VERCEL) {
     this.app.use('/uploads', express.static('/tmp/uploads'));
 }
@@ -92,6 +195,8 @@ class Server {
         
         // Teacher Routes
         this.app.use('/api/teacher', teacherRoutes);
+
+        
 
        //     ✅ ACADEMIC REPORTS — INLINE (server.js mein hi, hamesha chalega)
         const ar = express.Router();
