@@ -140,7 +140,17 @@ router.get('/announcements/responses',
 router.delete('/announcements/responses/:id',
     authMiddleware.authenticate,
     authMiddleware.adminOnly,
-    adminController.deleteResponse);
+    (req, res, next) => {
+        console.log(' DELETE ROUTE HIT! ID:', req.params.id);
+        next();
+    },
+    adminController.deleteResponse
+);
+
+   //router.delete('/announcements/responses/:id',
+    //authMiddleware.authenticate,
+    //authMiddleware.adminOnly,
+    //adminController.deleteResponse);
 
 // ==========================================
 // 7. DEPARTMENT REPORTS

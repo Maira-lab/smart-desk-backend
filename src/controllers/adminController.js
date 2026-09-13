@@ -51,6 +51,7 @@ class AdminController {
         this.getReportDetails = this.getReportDetails.bind(this);
         this.downloadReport = this.downloadReport.bind(this);
         this.sendDirectMessage = this.sendDirectMessage.bind(this);
+        this.deleteResponse = this.deleteResponse.bind(this);
         this.deleteReport = this.deleteReport.bind(this);
         this.getInstituteCondition = this.getInstituteCondition.bind(this);
         this.getInstitutions = this.getInstitutions.bind(this);
