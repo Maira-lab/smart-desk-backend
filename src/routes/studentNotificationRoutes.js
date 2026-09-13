@@ -37,7 +37,7 @@ const upload = multer({
             return;
         }
         
-        // ✅ SDK 57 FIX: Agar mimetype empty/generic hai, toh extension se check karo
+        //   SDK 57 FIX: Agar mimetype empty/generic hai, toh extension se check karo
         if (!mimetype || mimetype === 'application/octet-stream' || mimetype === '') {
             const originalName = file.originalname || '';
             const ext = originalName.split('.').pop()?.toLowerCase();

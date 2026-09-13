@@ -265,7 +265,7 @@ class StudentNotificationController {
                 savedFileUrl
             ]);
 
-            // ✅ PUSH NOTIFICATION TO ORIGINAL SENDER (Teacher/Admin/Coordinator)
+            //   PUSH NOTIFICATION TO ORIGINAL SENDER (Teacher/Admin/Coordinator)
             try {
                 const senderToken = await db.query(
                     'SELECT push_token, full_name FROM users WHERE user_id = ?',
@@ -476,7 +476,7 @@ class StudentNotificationController {
                 savedFileUrl
             ]);
 
-            // ✅ PUSH NOTIFICATION TO TEACHER (Assignment creator)
+            //   PUSH NOTIFICATION TO TEACHER (Assignment creator)
             try {
                 const teacherToken = await db.query(
                     'SELECT push_token, full_name FROM users WHERE user_id = ?',

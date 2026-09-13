@@ -41,7 +41,7 @@ const upload = multer({
             return;
         }
         
-        // ✅ SDK 57 FIX: Agar mimetype empty/generic hai, toh extension se check karo
+        //   SDK 57 FIX: Agar mimetype empty/generic hai, toh extension se check karo
         if (!mimetype || mimetype === 'application/octet-stream' || mimetype === '') {
             const originalName = file.originalname || '';
             const ext = originalName.split('.').pop()?.toLowerCase();
@@ -150,7 +150,7 @@ class TeacherController {
             const studentsQuery = `SELECT COUNT(DISTINCT e.student_id) AS students FROM enrollments e JOIN classrooms c ON e.classroom_id = c.classroom_id LEFT JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id LEFT JOIN teachers t ON ct.teacher_id = t.teacher_id OR ct.teacher_id = t.user_id WHERE (t.user_id = ? OR ct.teacher_id = ? OR LOWER(c.teacher_name) = LOWER(?)) AND e.status = 'Active'`;
             const studentResult = await db.query(studentsQuery, [teacherId, teacherId, teacherName]);
             
-            // ✅ NEW DEFINITION: Student ne bheji (Submission/Response) + Teacher ne reply NAHI kiya
+            //   NEW DEFINITION: Student ne bheji (Submission/Response) + Teacher ne reply NAHI kiya
             let assignResult = [{ pending: 0 }];
             try {
                 const assignmentsQuery = `
@@ -400,7 +400,7 @@ class TeacherController {
                     console.error('⚠️ Attendance notification error:', notifErr.message);
                 }
 
-                // ✅ PUSH NOTIFICATION TO STUDENT (email ke saath)
+                //   PUSH NOTIFICATION TO STUDENT (email ke saath)
                 try {
                     const stToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [student_id]);
                     if (stToken.length > 0 && stToken[0].push_token) {
@@ -908,7 +908,7 @@ try {
                     console.error('⚠️ Reply notification error:', notifError);
                 }
 
-                // ✅ EMAIL TO ADMIN (original sender)
+                //   EMAIL TO ADMIN (original sender)
                 try {
                     const adminInfo = await db.query('SELECT email, full_name, push_token FROM users WHERE user_id = ?', [targetId]);
                     if (adminInfo.length > 0 && adminInfo[0].email) {
@@ -949,7 +949,7 @@ try {
                     console.error('⚠️ Reply email error:', emailErr.message);
                 }
 
-                // ✅ PUSH NOTIFICATION TO ADMIN
+                //   PUSH NOTIFICATION TO ADMIN
                 try {
                     const adminToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [targetId]);
                     if (adminToken.length > 0 && adminToken[0].push_token) {
@@ -1365,7 +1365,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                 await db.query(`DELETE FROM marks WHERE student_id = ? AND classroom_id = ? AND assessment_type = ?`, [studentId, classId, en.type]);
                 await db.query(`INSERT INTO marks (student_id, classroom_id, assessment_type, assessment_title, marks_obtained, total_marks, percentage, grade) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [studentId, classId, en.type, en.title, en.obtained, en.total, pct, grade]);
             }
-                        // ✅ NEW: Jab access grant ho → student ko notification + push + email
+                        //   NEW: Jab access grant ho → student ko notification + push + email
             if (accessGranted === true || accessGranted === 'true' || accessGranted === 1) {
                 try {
                     const stInfo = await db.query('SELECT full_name, email, push_token FROM users WHERE user_id = ?', [studentId]);
@@ -1385,7 +1385,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         `Dear ${stName},\n\nYour academic report for ${subj} (${period}) is now available. Open Academic Reports to view it.\n\nSent via Smart Desk`
                     ]);
 
-                    // ✅ PUSH
+                    //   PUSH
                     if (stInfo[0]?.push_token) {
                         const pushResult = await pushService.sendAnnouncementPush({
                             pushToken: stInfo[0].push_token,
@@ -1401,7 +1401,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         console.log(`📱⚠️ No push token for student ${studentId}`);
                     }
 
-                    // ✅ EMAIL
+                    //   EMAIL
                     if (stInfo[0]?.email) {
                         await emailService.sendEmail({
                             to: stInfo[0].email,

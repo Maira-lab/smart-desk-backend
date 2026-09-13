@@ -16,6 +16,15 @@ if (!fs.existsSync(announcementsUploadDir)) {
     fs.mkdirSync(announcementsUploadDir, { recursive: true });
 }
 
+//   Helper: NOTIFICATION_SENT → "Notification Sent" (human-readable)
+function formatActionType(action) {
+    if (!action) return 'No recent activity';
+    return String(action)
+        .replace(/_/g, ' ')
+        .toLowerCase()
+        .replace(/\b\w/g, c => c.toUpperCase());
+}
+
 class AdminController {
     constructor() {
         this.db = db;
@@ -467,7 +476,7 @@ async createInstituteAdmin(req, res) {
     }
 
 
-    // ✅ RECOVER ACCOUNT - Move from Revoked (Inactive) back to Pending
+    //   RECOVER ACCOUNT - Move from Revoked (Inactive) back to Pending
 async recoverAccount(req, res) {
     try {
         const { user_id } = req.params;
@@ -899,7 +908,7 @@ async recoverAccount(req, res) {
     }
 
     //    GET RESPONSES / ANNOUNCEMENTS (Shows Coordinator/Teacher announcements in Admin Portal)
-     // ✅ FIXED: 'read' reserved keyword error resolved
+     //   FIXED: 'read' reserved keyword error resolved
     async getResponses(req, res) {
         try {
             const adminId = req.user?.user_id;
@@ -1038,10 +1047,17 @@ async deleteResponse(req, res) {
             const total = countResult[0]?.total || 0;
             
             const query = `
-                SELECT 
+                    SELECT 
                     u.user_id AS id,
                     u.full_name AS name,
                     u.email,
+                    u.user_role AS role,
+                    COALESCE(u.institute_name, u.department_name, u.class_name, 'Head Office') AS institute,
+                    u.department_name AS department,
+                    u.class_name AS className,
+                    u.semester,
+                    u.roll_no AS rollNo,
+                    u.status,
                     u.user_role AS role,
                     u.institute_name AS institute,
                     u.status,
@@ -1087,10 +1103,14 @@ async deleteResponse(req, res) {
                     name: user.name || 'Unknown',
                     email: user.email || 'N/A',
                     role: user.role?.toLowerCase() || 'student',
-                    institute: user.institute || 'N/A',
+                    institute: user.institute || user.department || user.className || 'Head Office',
+                    department: user.department || null,
+                    className: user.className || null,
+                    semester: user.semester || null,
+                    rollNo: user.rollNo || null,
                     status: status,
                     lastActive: lastActive,
-                    recentAction: user.recent_action || 'No recent activity',
+                    recentAction: formatActionType(user.recent_action),
                     loginCount: user.activity_count || 0,
                     reportsSubmitted: user.reports_submitted || 0,
                     isRestricted: user.is_restricted === 1 || user.is_restricted === true
@@ -1142,8 +1162,11 @@ async deleteResponse(req, res) {
             
             const logs = await db.query(query, [user_id]);
             
-            const formattedLogs = logs.map(log => {
-                let actionWithEmoji = log.action || 'Unknown action';
+                const formattedLogs = logs.map(log => {
+                const baseAction = log.action
+                ? String(log.action).replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+                : 'Unknown Action';
+                let actionWithEmoji = baseAction;
                 const actionEmojis = {
                     'LOGIN': '🔑', 'LOGOUT': '🚪', 'UPLOAD': '📤', 'DOWNLOAD': '📥',
                     'CREATE': '✨', 'UPDATE': '✏️', 'DELETE': '🗑️', 'VIEW': '👁️',
@@ -1152,8 +1175,8 @@ async deleteResponse(req, res) {
                 };
                 
                 for (const [key, emoji] of Object.entries(actionEmojis)) {
-                    if (log.action?.toUpperCase().includes(key)) {
-                        actionWithEmoji = `${emoji} ${log.action}`;
+                        if (log.action?.toUpperCase().includes(key)) {
+                        actionWithEmoji = `${emoji} ${baseAction}`;
                         break;
                     }
                 }
@@ -1480,7 +1503,7 @@ Please open Department Reports / Pending Requests to generate and submit this re
             console.error('⚠️ Report request notification error:', notifErr.message);
         }
 
-        // ✅ PUSH NOTIFICATION TO COORDINATOR
+        //   PUSH NOTIFICATION TO COORDINATOR
         try {
             const coordToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [coordinatorUserId]);
             if (coordToken.length > 0 && coordToken[0].push_token) {

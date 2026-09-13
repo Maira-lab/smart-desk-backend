@@ -55,7 +55,7 @@ class StudentAttendanceController {
                 dateCondition = `AND a.attendance_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
             }
 
-            // ✅ CRITICAL FIX: LOWER(a.status) use karo - case-insensitive matching
+            //   CRITICAL FIX: LOWER(a.status) use karo - case-insensitive matching
             // Teacher lowercase mein save karta hai (present/absent/late/leave)
             const query = `
                 SELECT 
@@ -88,7 +88,7 @@ class StudentAttendanceController {
 
             const results = await db.query(query, [period, studentId, studentId]);
 
-            // ✅ Graph-ready formatted data
+            //   Graph-ready formatted data
             const attendance = results.map(r => ({
                 id: r.id?.toString() || `ATT-${Date.now()}`,
                 subject: r.subject || 'N/A',
@@ -97,7 +97,7 @@ class StudentAttendanceController {
                 present: r.present || 0,
                 absent: r.absent || 0,
                 leaveDays: r.leaveDays || 0,
-                percentage: parseFloat(r.percentage) || 0,  // ✅ Float ensure karo
+                percentage: parseFloat(r.percentage) || 0,  //   Float ensure karo
                 lastUpdated: r.lastUpdated || new Date().toLocaleDateString(),
                 period: r.period || period
             }));
@@ -189,7 +189,7 @@ class StudentAttendanceController {
 
             const records = await db.query(attendanceQuery, [classroom_id, studentId, studentId]);
 
-            // ✅ Case-insensitive stats
+            //   Case-insensitive stats
             const stats = {
                 total: records.length,
                 present: records.filter(r => ['present', 'p'].includes(r.status)).length,
@@ -234,7 +234,7 @@ class StudentAttendanceController {
                 studId = studentResult[0].student_id;
             }
 
-            // ✅ Case-insensitive summary
+            //   Case-insensitive summary
             const summaryQuery = `
                 SELECT 
                     COUNT(DISTINCT a.classroom_id) AS totalSubjects,
@@ -249,7 +249,7 @@ class StudentAttendanceController {
 
             const summaryResult = await db.query(summaryQuery, [studId]);
 
-            // ✅ Monthly graph data (last 6 months)
+            //   Monthly graph data (last 6 months)
             const monthlyQuery = `
                 SELECT 
                     DATE_FORMAT(attendance_date, '%b %Y') AS month,

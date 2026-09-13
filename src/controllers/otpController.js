@@ -76,7 +76,7 @@ const sendOTP = async (req, res) => {
             otp, expiresAt: Date.now() + 5 * 60 * 1000, verified: false
         });
 
-        // ✅ .env se testing mode check karein
+        //   .env se testing mode check karein
             const isTestingMode = process.env.EMAIL_TESTING_MODE === 'true' || process.env.EMAIL_TESTING_MODE === '1';
             const recipientEmail = isTestingMode ? process.env.SMTP_USER : email;
 
@@ -177,7 +177,7 @@ const resendOTP = async (req, res) => {
         
         otpStore.set(`forgot_${email}`, { otp, expiresAt: Date.now() + 5 * 60 * 1000, verified: false });
 
-// ✅ .env se testing mode check karein
+//   .env se testing mode check karein
         const isTestingMode = process.env.EMAIL_TESTING_MODE === 'true' || process.env.EMAIL_TESTING_MODE === '1';
         const recipientEmail = isTestingMode ? process.env.SMTP_USER : email;
 
@@ -221,7 +221,7 @@ const sendRegistrationOTP = async (req, res) => {
             otp, expiresAt: Date.now() + 5 * 60 * 1000, verified: false, domainType: domainCheck.type
         });
 
-        // ✅ .env se testing mode check karein
+        //   .env se testing mode check karein
         const isTestingMode = process.env.EMAIL_TESTING_MODE === 'true' || process.env.EMAIL_TESTING_MODE === '1';
         const recipientEmail = isTestingMode ? process.env.SMTP_USER : email;
 

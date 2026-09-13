@@ -50,7 +50,7 @@ cb(null, true);
 return;
 }
 
-// ✅ SDK 57 FIX: Agar mimetype empty/generic hai, toh extension se check karo
+//   SDK 57 FIX: Agar mimetype empty/generic hai, toh extension se check karo
 if (!mimetype || mimetype === 'application/octet-stream' || mimetype === '') {
 const originalName = file.originalname || '';
 const ext = originalName.split('.').pop()?.toLowerCase();
@@ -1408,7 +1408,7 @@ AND sender_role IN ('Admin', 'System')`;            const adminResult = await db
                     t.qualification,
                     t.joining_date
                 FROM users u
-                JOIN teachers t ON u.user_id = t.user_id
+                LEFT JOIN teachers t ON u.user_id = t.user_id
                 WHERE u.status = 'Active' AND u.user_role = 'Teacher'
                 ORDER BY u.full_name ASC
             `;
@@ -1521,12 +1521,12 @@ AND sender_role IN ('Admin', 'System')`;            const adminResult = await db
                 });
             }
 
-            const teacherQuery = `
-                SELECT u.user_id, u.full_name, u.email, t.teacher_id AS internal_teacher_id 
-                FROM users u
-                JOIN teachers t ON u.user_id = t.user_id
-                WHERE u.user_id = ? AND u.status = 'Active' AND u.user_role = 'Teacher'
-            `;
+                    const teacherQuery = `
+        SELECT u.user_id, u.full_name, u.email, t.teacher_id AS internal_teacher_id
+        FROM users u
+        LEFT JOIN teachers t ON u.user_id = t.user_id
+        WHERE u.user_id = ? AND u.status = 'Active' AND u.user_role = 'Teacher'
+        `;
             const teacherResult = await db.query(teacherQuery, [teacher_id]);
 
             if (teacherResult.length === 0) {
@@ -1613,7 +1613,7 @@ Please check your schedule for details.`;
             notifMessage
         ]);
         
-        // ✅ PUSH NOTIFICATION TO TEACHER
+        //   PUSH NOTIFICATION TO TEACHER
         try {
             const teacherToken = await db.query('SELECT push_token FROM users WHERE user_id = ?', [teacher_id]);
             if (teacherToken.length > 0 && teacherToken[0].push_token) {
@@ -2050,7 +2050,7 @@ Please check your schedule for details.`;
                 notifMessage
             ]);
             
-            // ✅ PUSH NOTIFICATION TO STUDENT
+            //   PUSH NOTIFICATION TO STUDENT
             try {
                 const stToken = await db.query('SELECT push_token FROM users WHERE user_id = ?', [student.id]);
                 if (stToken.length > 0 && stToken[0].push_token) {
@@ -2797,7 +2797,7 @@ Please review the report in your dashboard.`;
                 notifMessage
             ]);
             
-            // ✅ PUSH NOTIFICATION TO ADMIN
+            //   PUSH NOTIFICATION TO ADMIN
             try {
                 const adminToken = await db.query('SELECT push_token FROM users WHERE user_id = ?', [adminUserId]);
                 if (adminToken.length > 0 && adminToken[0].push_token) {
@@ -3581,18 +3581,18 @@ const savedFileName = Date.now() + '-' + safeOriginal;
         }
     }   // 45. REPLY TO NOTIFICATION
     //  
-        // 45. REPLY TO NOTIFICATION - ✅ WITH FILE ATTACHMENT SUPPORT
-        // 45. REPLY TO NOTIFICATION - ✅ BULLETPROOF VERSION
+        // 45. REPLY TO NOTIFICATION -WITH FILE ATTACHMENT SUPPORT
+        // 45. REPLY TO NOTIFICATION - BULLETPROOF VERSION
     async replyToNotification(req, res) {
         try {
             const { notification_id } = req.params;
             const { message, recipient_id, recipient_role } = req.body;
             
-            // ✅ CRITICAL: Sab se pehle variables declare karein (Crash fix)
+            // CRITICAL: Sab se pehle variables declare karein (Crash fix)
             const coordinatorId = req.user?.user_id;
             const coordinatorName = req.user?.full_name || 'Coordinator';
             
-            // ✅ ROBUST file detection
+            // CRITICAL: ROBUST file detection
             let attachedFile = req.file;
             if (!attachedFile && req.files) {
                 if (Array.isArray(req.files) && req.files.length > 0) {
@@ -3638,7 +3638,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                 try { await db.query(`ALTER TABLE notification_replies ADD COLUMN attachment_url TEXT`); } catch (e) {}
             }
 
-            // ✅ SAVE ATTACHMENT IF PRESENT
+            //   SAVE ATTACHMENT IF PRESENT
             let savedFileUrl = null;
             if (attachedFile) {
                 try {
@@ -3655,7 +3655,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                 }
             }
 
-            // ✅ INSERT REPLY WITH ATTACHMENT
+            //   INSERT REPLY WITH ATTACHMENT
             const replyQuery = `
                 INSERT INTO notification_replies
                 (notification_id, sender_id, sender_role, message, attachment_url, created_at)
@@ -3663,7 +3663,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
             `;
             const result = await db.query(replyQuery, [notification_id, coordinatorId, message.trim(), savedFileUrl]);
 
-            // ✅ SEND REPLY NOTIFICATION BACK TO ORIGINAL SENDER
+            //   SEND REPLY NOTIFICATION BACK TO ORIGINAL SENDER
             let targetId = recipient_id;
             let targetRole = recipient_role;
             if (!targetId) {
@@ -3700,15 +3700,16 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                     console.error('Reply notification error:', notifError);
                 }
 
-                // ✅ EMAIL TO ORIGINAL SENDER (Admin/Teacher/Student)
+                //   EMAIL TO ORIGINAL SENDER (Admin/Teacher/Student)
                 try {
                     const senderInfo = await db.query('SELECT email, full_name FROM users WHERE user_id = ?', [targetId]);
                     if (senderInfo.length > 0 && senderInfo[0].email) {
+                        const cleanMessage = message.trim();   
                         const emailPayload = {
                             to: senderInfo[0].email,
                             subject: `💬 Reply from Coordinator`,
                              message: cleanMessage,          //  emailService yeh field parhta hai (undefined ka hal)
-                             senderName: coordinatorName,    // ✅ template mein naam ke liye
+                             senderName: coordinatorName,    //   template mein naam ke liye
                              replyMessage: cleanMessage, 
                                                         html: `<h2>💬 New Reply Received</h2>
                                    <p><b>${coordinatorName}</b> has replied to your notification.</p>
@@ -3739,7 +3740,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                     console.error('⚠️ Reply email error:', emailErr.message);
                 }
 
-                // ✅ PUSH NOTIFICATION TO REPLY RECIPIENT
+                //   PUSH NOTIFICATION TO REPLY RECIPIENT
                 try {
                     const targetToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [targetId]);
                     if (targetToken.length > 0 && targetToken[0].push_token) {

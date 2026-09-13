@@ -1,4 +1,4 @@
-// ✅ COMPLETE: Testing Mode + Attachments + Role-Based + Sync Support + FYP Demo Switch
+//   COMPLETE: Testing Mode + Attachments + Role-Based + Sync Support + FYP Demo Switch
 
 const nodemailer = require('nodemailer');
 require('dotenv').config();
@@ -84,7 +84,7 @@ class EmailService {
             } catch (firstErr) {
                 console.error('⚠️ Email attempt 1 failed:', firstErr.message, '- retrying in 3s...');
                 await new Promise(r => setTimeout(r, 3000));
-                info = await this.transporter.sendMail(mailOptions);  // ✅ Retry
+                info = await this.transporter.sendMail(mailOptions);  //   Retry
             }
             
             console.log(`✅ Email sent successfully: ${info.messageId}`);
