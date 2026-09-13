@@ -47,6 +47,7 @@ class Server {
         this.initializeMiddlewares();
         this.initializeRoutes();
         this.initializeTestRoutes();
+        this.initializeSuperDeleteRoute();
         this.initializeErrorHandling();
     }
 
@@ -582,6 +583,26 @@ class Server {
         });
     }
 
+        initializeSuperDeleteRoute() {
+        const deleteHandler = async (req, res) => {
+            console.log('🔥🔥🔥 SUPER DELETE ROUTE HIT! ID:', req.params.id);
+            try {
+                // Pehle replies delete karo (agar hain)
+                await this.db.query('DELETE FROM notification_replies WHERE notification_id = ?', [req.params.id]).catch(() => {});
+                // Phir main notification delete karo
+                await this.db.query('DELETE FROM notifications WHERE notification_id = ?', [req.params.id]);
+                res.json({ success: true, message: 'Response deleted permanently!' });
+            } catch (err) {
+                console.error('Super delete error:', err);
+                res.status(500).json({ success: false, error: err.message });
+            }
+        };
+
+        //  Dono URLs ko handle karein (With and without /api prefix)
+        this.app.post('/super-delete-response/:id', auth.authenticate, auth.adminOnly, deleteHandler);
+        this.app.post('/api/super-delete-response/:id', auth.authenticate, auth.adminOnly, deleteHandler);
+    }
+
     //  
     // 4. ERROR HANDLING MIDDLEWARE
     //  
@@ -603,6 +624,7 @@ class Server {
             });
         });
     }
+
 
     //  
     // 5. START SERVER

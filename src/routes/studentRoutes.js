@@ -10,9 +10,10 @@ router.get('/reports', authMiddleware.authenticate, authMiddleware.studentOnly, 
 
 router.delete('/notifications/:id', authMiddleware.authenticate, authMiddleware.studentOnly, studentController.deleteNotification);
 
+router.get('/attendance', authMiddleware.authenticate, studentController.getAttendance);
 router.get('/notifications', authMiddleware.authenticate, authMiddleware.studentOnly, studentController.getNotifications);
 router.put('/notifications/:notification_id/read', authMiddleware.authenticate, authMiddleware.studentOnly, studentController.markNotificationRead);
 router.get('/classes', authMiddleware.authenticate, authMiddleware.studentOnly, studentController.getTodaysClasses);
-router.get('/attendance', authMiddleware.authenticate, authMiddleware.studentOnly, studentController.getAttendanceSummary);
+router.get('/attendance/summary', authMiddleware.authenticate, authMiddleware.studentOnly, studentController.getAttendanceSummary);
 
 module.exports = router;

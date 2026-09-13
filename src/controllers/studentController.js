@@ -16,6 +16,7 @@ class StudentController {
         this.getTodaysClasses = this.getTodaysClasses.bind(this);
         this.deleteNotification = this.deleteNotification.bind(this);
         this.getAttendanceSummary = this.getAttendanceSummary.bind(this);
+        this.getAttendance = this.getAttendance.bind(this);
     }
 
     // ==========================================
@@ -163,6 +164,107 @@ class StudentController {
             res.json({ success: true, profile: results[0] });
         } catch (error) {
             console.error('Get profile error:', error);
+            res.status(500).json({ success: false, error: 'Server error: ' + error.message });
+        }
+    }
+
+    // ==========================================
+    // 9. GET ATTENDANCE (For Graph & Subject-wise UI)
+       // ==========================================
+    // 9. GET ATTENDANCE (BULLETPROOF - No More Crashes)
+    // ==========================================
+    async getAttendance(req, res) {
+        try {
+            const studentId = req.user?.user_id;
+            if (!studentId) {
+                return res.status(401).json({ success: false, error: 'Unauthorized' });
+            }
+
+            const period = req.query.period || 'monthly';
+            
+            // 🛡️ BULLETPROOF FIX: Dynamically detect the date column to NEVER crash
+            let dateColumn = null;
+            try {
+                const cols = await db.query(`SHOW COLUMNS FROM attendance`);
+                const colNames = cols.map(c => c.Field);
+                if (colNames.includes('date')) dateColumn = 'date';
+                else if (colNames.includes('created_at')) dateColumn = 'created_at';
+                else if (colNames.includes('attendance_date')) dateColumn = 'attendance_date';
+                else if (colNames.includes('marked_on')) dateColumn = 'marked_on';
+            } catch (e) { 
+                console.warn('⚠️ Could not detect date column, fetching all records safely.');
+            }
+
+            let dateFilter = '';
+            if (dateColumn) {
+                if (period === 'weekly') {
+                    dateFilter = `AND a.${dateColumn} >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`;
+                } else {
+                    dateFilter = `AND MONTH(a.${dateColumn}) = MONTH(CURDATE()) AND YEAR(a.${dateColumn}) = YEAR(CURDATE())`;
+                }
+            }
+
+            // Subject-wise Attendance Calculate karo
+            const query = `
+                SELECT 
+                    c.classroom_id AS id,
+                    c.subject_name AS subject,
+                    c.teacher_name AS teacherName,
+                    COUNT(a.attendance_id) AS totalClasses,
+                    SUM(CASE WHEN LOWER(a.status) = 'present' THEN 1 ELSE 0 END) AS present,
+                    SUM(CASE WHEN LOWER(a.status) = 'absent' THEN 1 ELSE 0 END) AS absent,
+                    SUM(CASE WHEN LOWER(a.status) = 'leave' THEN 1 ELSE 0 END) AS leaveDays
+                FROM attendance a
+                JOIN classrooms c ON a.classroom_id = c.classroom_id
+                WHERE a.student_id = ? ${dateFilter}
+                GROUP BY c.classroom_id
+            `;
+            
+            const results = await db.query(query, [studentId]);
+            
+            // Frontend ke format mein data convert karo
+            const attendance = results.map(r => ({
+                id: r.id.toString(),
+                subject: r.subject,
+                teacherName: r.teacherName || 'Teacher',
+                totalClasses: r.totalClasses || 0,
+                present: r.present || 0,
+                absent: r.absent || 0,
+                leaveDays: r.leaveDays || 0,
+                percentage: r.totalClasses > 0 ? Math.round((r.present / r.totalClasses) * 100) : 0,
+                lastUpdated: new Date().toLocaleDateString(),
+                period: period
+            }));
+
+            // Overall Stats (Total, Present, Absent)
+            const overall = attendance.reduce((acc, curr) => ({
+                total: acc.total + curr.totalClasses,
+                present: acc.present + curr.present,
+                absent: acc.absent + curr.absent,
+                leaveDays: acc.leaveDays + curr.leaveDays
+            }), { total: 0, present: 0, absent: 0, leaveDays: 0 });
+            
+            overall.percentage = overall.total > 0 ? Math.round((overall.present / overall.total) * 100) : 0;
+
+            // Student Info
+            const studentQuery = `
+                SELECT u.full_name, u.email, s.roll_no, s.department_name, s.section, s.semester, s.class_name
+                FROM users u LEFT JOIN students s ON u.user_id = s.user_id WHERE u.user_id = ?
+            `;
+            const s = (await db.query(studentQuery, [studentId]))[0] || {};
+
+            res.json({
+                success: true,
+                attendance,
+                overall,
+                student: { 
+                    id: studentId.toString(), name: s.full_name || 'Student', email: s.email || '',
+                    rollNo: s.roll_no || 'N/A', department: s.department_name || 'N/A', 
+                    section: s.section || 'N/A', semester: s.semester || 'N/A', className: s.class_name || 'N/A' 
+                }
+            });
+        } catch (error) {
+            console.error('❌ Get attendance error:', error);
             res.status(500).json({ success: false, error: 'Server error: ' + error.message });
         }
     }

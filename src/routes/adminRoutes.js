@@ -137,13 +137,10 @@ router.get('/announcements/responses',
     adminController.getResponses
 );
 
-router.delete('/announcements/responses/:id',
+//  PERMANENT FIX: POST method wala route (Frontend ke naye URL ke liye)
+router.post('/delete-response/:id',
     authMiddleware.authenticate,
     authMiddleware.adminOnly,
-    (req, res, next) => {
-        console.log(' DELETE ROUTE HIT! ID:', req.params.id);
-        next();
-    },
     adminController.deleteResponse
 );
 
