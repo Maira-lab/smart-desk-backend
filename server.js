@@ -57,7 +57,7 @@ class Server {
     //  
     initializeMiddlewares() {
         this.app.use(cors({
-            origin: process.env.CLIENT_URL || 'http://localhost:3000',
+            origin: true,
             credentials: true
         }));
         this.app.use(express.json({ limit: '50mb' }));
