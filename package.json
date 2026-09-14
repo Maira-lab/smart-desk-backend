@@ -21,6 +21,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "mysql2": "^3.22.5",
+    "node-fetch": "^2.7.0",
     "nodemailer": "^9.0.5",
     "onesignal-node": "^3.4.0",
     "pdfkit": "^0.19.1",
