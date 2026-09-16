@@ -899,7 +899,7 @@ try {
                         VALUES (?, 'Teacher', ?, ?, 'Response', ?, ?, ?, FALSE, FALSE)
                     `, [
                         teacherId, targetId, targetRole, 
-                        '💬 Reply from Teacher', 
+                        'Reply from Teacher', 
                         message || '📎 Attachment sent', 
                         savedFileUrl
                     ]);
@@ -917,8 +917,8 @@ try {
                         
                         const emailPayload = {
                             to: adminInfo[0].email,
-                            subject: `💬 Reply from ${teacherName}`,
-                            html: `<h2>💬 New Reply Received</h2>
+                            subject: `Reply from ${teacherName}`,
+                            html: `<h2>New Reply Received</h2>
                                    <p><b>${teacherName}</b> has replied to your notification.</p>
                                    <div style="background:#f8fafc;padding:16px;border-radius:8px;margin:16px 0;">
                                      <p><b>Message:</b></p>
@@ -958,7 +958,7 @@ try {
                         
                         const pushResult = await pushService.sendAnnouncementPush({
                             pushToken: adminToken[0].push_token,
-                            title: `💬 Reply from ${teacherName}`,
+                            title: `Reply from ${teacherName}`,
                             message: (message || '📎 Attachment sent').substring(0, 100) + (savedFileUrl ? ' 📎' : ''),
                             announcementId: replyNotifId
                         });

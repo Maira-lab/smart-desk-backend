@@ -283,6 +283,21 @@ class AuthController {
                 });
             }
 
+            //  FULL NAME VALIDATION: Only alphabets and spaces allowed, no digits or special characters
+            const nameRegex = /^[A-Za-z\s]+$/;
+            if (!nameRegex.test(full_name.trim())) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Full Name can only contain alphabets (letters) and spaces. No digits or special characters are allowed.'
+                });
+            }
+            if (full_name.trim().length < 2) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Full Name must be at least 2 characters long.'
+                });
+            }
+
             //  PASSWORD VALIDATION: Minimum 8 characters (Letters, Digits, Special Characters allowed)
             if (!password || password.trim().length < 8) {
                 return res.status(400).json({

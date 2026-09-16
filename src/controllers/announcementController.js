@@ -89,9 +89,16 @@ class AnnouncementController {
                     recipients = await db.query(userQuery, parsedRecipientIds);
                 }
             } else {
-                const roleCondition = receiverRole !== 'All' ? `AND user_role = '${receiverRole}'` : '';
-                const userQuery = `SELECT user_id, email, full_name, user_role, push_token FROM users WHERE status = 'Active' ${roleCondition}`;
-                recipients = await db.query(userQuery);
+                let roleCondition = '';
+                if (target_audience === 'teachers') {
+                    roleCondition = "AND user_role = 'Teacher'";
+                } else if (target_audience === 'coordinators') {
+                    roleCondition = "AND user_role = 'Coordinator'";
+                } else {
+                    roleCondition = "AND user_role IN ('Teacher', 'Coordinator')";
+                }
+                const userQuery = `SELECT user_id, email, full_name, user_role, push_token FROM users WHERE status = 'Active' AND user_id != ? ${roleCondition}`;
+                recipients = await db.query(userQuery, [senderId]);
             }
 
             if (recipients.length === 0) {

@@ -254,7 +254,7 @@ class StudentNotificationController {
             `;
 
             const replyTitle = `Re: ${original.title || 'Notification Reply'}`;
-            const replyMessage = `Reply from ${studentName}:\n\n${reply_message ? reply_message.trim() : '📎 Attachment sent'}`;
+            const replyMessage = reply_message ? reply_message.trim() : '📎 Attachment sent';
 
             const result = await db.query(insertQuery, [
                 studentId,
@@ -274,7 +274,7 @@ class StudentNotificationController {
                 if (senderToken.length > 0 && senderToken[0].push_token) {
                     const pushResult = await pushService.sendAnnouncementPush({
                         pushToken: senderToken[0].push_token,
-                        title: `💬 Reply from ${studentName}`,
+                        title: `Reply from ${studentName}`,
                         message: reply_message 
                             ? reply_message.trim().substring(0, 100) 
                             : '📎 Attachment sent',

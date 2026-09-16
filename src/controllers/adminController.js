@@ -839,10 +839,10 @@ async recoverAccount(req, res) {
                     const ids = JSON.parse(recipient_ids);
                     emailUsers = await db.query(`SELECT user_id, full_name, email FROM users WHERE user_id IN (${ids.map(() => '?').join(',')}) AND status = 'Active'`, ids);
                 } else if (roles.includes('All')) {
-                    emailUsers = await db.query(`SELECT user_id, full_name, email FROM users WHERE status = 'Active' AND user_role IN ('Teacher','Student','Coordinator')`);
+                    emailUsers = await db.query(`SELECT user_id, full_name, email FROM users WHERE status = 'Active' AND user_role IN ('Teacher','Coordinator') AND user_id != ?`, [adminId]);
                 } else {
                     const ph = roles.map(() => '?').join(',');
-                    emailUsers = await db.query(`SELECT user_id, full_name, email FROM users WHERE status = 'Active' AND user_role IN (${ph})`, roles);
+                    emailUsers = await db.query(`SELECT user_id, full_name, email FROM users WHERE status = 'Active' AND user_role IN (${ph}) AND user_id != ?`, [...roles, adminId]);
                 }
                 
                 const emailService = require('../services/emailService');

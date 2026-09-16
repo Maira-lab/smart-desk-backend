@@ -1522,7 +1522,7 @@ AND sender_role IN ('Admin', 'System')`;            const adminResult = await db
             }
 
                     const teacherQuery = `
-        SELECT u.user_id, u.full_name, u.email, t.teacher_id AS internal_teacher_id
+        SELECT u.user_id, u.full_name, u.email, u.institute_name, t.teacher_id AS internal_teacher_id
         FROM users u
         LEFT JOIN teachers t ON u.user_id = t.user_id
         WHERE u.user_id = ? AND u.status = 'Active' AND u.user_role = 'Teacher'
@@ -1537,6 +1537,23 @@ AND sender_role IN ('Admin', 'System')`;            const adminResult = await db
             }
 
             const teacher = teacherResult[0];
+
+            let internalTeacherId = teacher.internal_teacher_id;
+            if (!internalTeacherId) {
+                try {
+                    const insertT = await db.query(
+                        'INSERT INTO teachers (user_id, institute_name) VALUES (?, ?) ON DUPLICATE KEY UPDATE teacher_id=LAST_INSERT_ID(teacher_id)',
+                        [teacher.user_id, teacher.institute_name || 'Smart Desk Institute']
+                    );
+                    internalTeacherId = insertT.insertId;
+                } catch (e) {
+                    console.error('Error auto-inserting teacher:', e);
+                }
+                if (!internalTeacherId) {
+                    const tRow = await db.query('SELECT teacher_id FROM teachers WHERE user_id = ?', [teacher.user_id]);
+                    if (tRow.length > 0) internalTeacherId = tRow[0].teacher_id;
+                }
+            }
 
             const classQuery = `
                 SELECT c.*, s.semester_code 
@@ -1574,13 +1591,13 @@ AND sender_role IN ('Admin', 'System')`;            const adminResult = await db
                     SET teacher_id = ?, assigned_date = CURDATE()
                     WHERE classroom_id = ?
                 `;
-                await db.query(updateAssignmentQuery, [teacher.internal_teacher_id || teacher_id, class_id]);
+                await db.query(updateAssignmentQuery, [internalTeacherId, class_id]);
             } else {
                 const insertAssignmentQuery = `
                     INSERT INTO classroom_teachers (classroom_id, teacher_id, subject_name, assigned_date)
                     VALUES (?, ?, ?, CURDATE())
                 `;
-                await db.query(insertAssignmentQuery, [class_id, teacher.internal_teacher_id || teacher_id, classData.subject_name]);
+                await db.query(insertAssignmentQuery, [class_id, internalTeacherId, classData.subject_name]);
             }
 
             const logQuery = `
@@ -1598,7 +1615,7 @@ AND sender_role IN ('Admin', 'System')`;            const adminResult = await db
             notification_type, title, message, is_pushed)
             VALUES (?, 'Coordinator', ?, 'Teacher', 'Announcement', ?, ?, FALSE)
         `;
-        const notifTitle = `📚 New Class Assignment: ${classData.subject_name}`;
+        const notifTitle = `New Class Assignment: ${classData.subject_name}`;
         const notifMessage = `Dear ${teacher.full_name},
 You have been assigned a new class.
 📚 Subject: ${classData.subject_name}
@@ -3691,7 +3708,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         coordinatorId,
                         targetId,
                         targetRole || 'Admin',
-                        '💬 Reply from Coordinator',
+                        'Reply from Coordinator',
                         message.trim(),
                         savedFileUrl
                     ]);
@@ -3707,11 +3724,11 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         const cleanMessage = message.trim();   
                         const emailPayload = {
                             to: senderInfo[0].email,
-                            subject: `💬 Reply from Coordinator`,
+                            subject: `Reply from Coordinator`,
                              message: cleanMessage,          //  emailService yeh field parhta hai (undefined ka hal)
                              senderName: coordinatorName,    //   template mein naam ke liye
                              replyMessage: cleanMessage, 
-                                                        html: `<h2>💬 New Reply Received</h2>
+                                                        html: `<h2>New Reply Received</h2>
                                    <p><b>${coordinatorName}</b> has replied to your notification.</p>
                                    <div style="background:#f8fafc;padding:16px;border-radius:8px;margin:16px 0;">
                                      <p><b>Message:</b></p>
@@ -3746,7 +3763,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                     if (targetToken.length > 0 && targetToken[0].push_token) {
                         const pushResult = await pushService.sendAnnouncementPush({
                             pushToken: targetToken[0].push_token,
-                            title: '💬 Reply from Coordinator',
+                            title: 'Reply from Coordinator',
                             message: message.trim().substring(0, 100) + (savedFileUrl ? ' 📎' : ''),
                             announcementId: replyNotifId
                         });
