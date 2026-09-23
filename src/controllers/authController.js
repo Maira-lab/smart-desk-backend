@@ -617,26 +617,6 @@ class AuthController {
             });
         }
     }
-
-    //  NEW: Push Token Save Karein
-async updatePushToken(req, res) {
-    try {
-        const userId = req.user?.user_id;
-        const { pushToken } = req.body;
-
-        if (!userId || !pushToken) {
-            return res.status(400).json({ success: false, error: 'Missing pushToken' });
-        }
-
-        await db.query('UPDATE users SET push_token = ? WHERE user_id = ?', [pushToken, userId]);
-        console.log(`✅ Push token saved for user ${userId}`);
-
-        res.json({ success: true, message: 'Push token saved successfully' });
-    } catch (error) {
-        console.error('Update push token error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-}
     //  
     // 8. RESET PASSWORD
     //  
@@ -706,6 +686,26 @@ async updatePushToken(req, res) {
                 success: false,
                 error: 'Failed to reset password'
             });
+        }
+    }
+
+    // Push Token Save Karein
+    async updatePushToken(req, res) {
+        try {
+            const userId = req.user?.user_id;
+            const { pushToken } = req.body;
+
+            if (!userId || !pushToken) {
+                return res.status(400).json({ success: false, error: 'Missing pushToken' });
+            }
+
+            await this.query('UPDATE users SET push_token = ? WHERE user_id = ?', [pushToken, userId]);
+            console.log(`✅ Push token saved for user ${userId}`);
+
+            res.json({ success: true, message: 'Push token saved successfully' });
+        } catch (error) {
+            console.error('Update push token error:', error);
+            res.status(500).json({ success: false, error: error.message });
         }
     }
 }

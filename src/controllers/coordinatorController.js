@@ -799,11 +799,12 @@ class CoordinatorController {
 
             //  FIX: Semester text column ko bhi update karo
             const semesterText = semester || (final_semester_id ? `Semester ${final_semester_id}` : null);
+            const final_class_name = class_name || subject_name || (class_code ? `Class ${class_code}` : 'Class');
 
             const query = `
                 UPDATE classrooms 
-                SET class_code = ?, 
-                    class_name = ?,
+                SET class_code = COALESCE(?, class_code), 
+                    class_name = COALESCE(?, class_name, ?),
                     semester_id = ?, 
                     semester = ?,
                     department_name = ?,
@@ -820,7 +821,8 @@ class CoordinatorController {
 
             await db.query(query, [
                 class_code,
-                class_name,
+                class_name || null,
+                final_class_name,
                 final_semester_id,
                 semesterText,
                 department_name || null,
@@ -3084,6 +3086,7 @@ Please review the report in your dashboard.`;
                                 content: attachedFile.buffer,
                                 contentType: attachedFile.mimetype
                             }];
+                            emailPayload.downloadUrl = savedFileUrl;
                         }
                         const emailResult = await emailService.sendAnnouncementEmail(emailPayload);
                         if (emailResult.success) {
@@ -3293,10 +3296,11 @@ const savedFileName = Date.now() + '-' + safeOriginal;
 
                             if (attachedFile) {
                                 emailPayload.attachments = [{
-    filename: attachedFile.originalname,
-    content: attachedFile.buffer ? attachedFile.buffer : fs.createReadStream(attachedFile.path),
-    contentType: attachedFile.mimetype
-}];
+                                    filename: attachedFile.originalname,
+                                    content: attachedFile.buffer ? attachedFile.buffer : fs.createReadStream(attachedFile.path),
+                                    contentType: attachedFile.mimetype
+                                }];
+                                emailPayload.downloadUrl = savedFileUrl;
                             }
 
                             const emailResult = await emailService.sendAnnouncementEmail(emailPayload);
@@ -3744,6 +3748,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                                 content: attachedFile.buffer,
                                 contentType: attachedFile.mimetype
                             }];
+                            emailPayload.downloadUrl = savedFileUrl;
                         }
                         const emailResult = await emailService.sendAnnouncementEmail(emailPayload);
                         if (emailResult && emailResult.success) {

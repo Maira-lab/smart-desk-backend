@@ -662,6 +662,10 @@ async recoverAccount(req, res) {
                 return res.status(400).json({ success: false, error: 'Please fill all required fields' });
             }
 
+            if (!/^[A-Za-z\s]+$/.test(String(full_name).trim())) {
+                return res.status(400).json({ success: false, error: 'Full name can only contain alphabets and spaces' });
+            }
+
            //      PASSWORD VALIDATION: Minimum 8 characters (Letters, Digits, Special Characters allowed)
             if (password.length < 8) {
                 return res.status(400).json({
@@ -680,7 +684,6 @@ async recoverAccount(req, res) {
             let activeCoordQuery = `
                 SELECT u.user_id, u.full_name, u.email 
                 FROM users u
-                JOIN coordinators c ON u.user_id = c.user_id
                 WHERE u.user_role = 'Coordinator' 
                   AND u.status = 'Active' 
                   AND (u.is_restricted = 0 OR u.is_restricted IS NULL)
@@ -688,12 +691,8 @@ async recoverAccount(req, res) {
             let activeCoordParams = [];
 
             if (instituteId) {
-                // Agar Admin kisi specific institute ka hai, toh sirf us institute ka coordinator check karo
-                activeCoordQuery += ' AND u.institute_id = ?';
+                activeCoordQuery += ' AND (u.institute_id = ? OR u.institute_id IS NULL)';
                 activeCoordParams.push(instituteId);
-            } else {
-                // Agar Super Admin hai (institute_id NULL), toh global/NULL coordinator check karo
-                activeCoordQuery += ' AND u.institute_id IS NULL';
             }
             activeCoordQuery += ' LIMIT 1';
 
@@ -703,7 +702,13 @@ async recoverAccount(req, res) {
                 const existingCoord = activeCoordCheck[0];
                 return res.status(400).json({ 
                     success: false, 
-                    error: `⚠️ An active coordinator already exists for your institute!\n\nName: ${existingCoord.full_name}\nEmail: ${existingCoord.email}\n\nPlease go to "Monitor Users" and restrict/revoke this coordinator first before creating a new one.`
+                    alreadyExists: true,
+                    existingCoordinator: {
+                        id: existingCoord.user_id,
+                        name: existingCoord.full_name,
+                        email: existingCoord.email
+                    },
+                    error: `⚠️ An active coordinator already exists!\n\nName: ${existingCoord.full_name}\nEmail: ${existingCoord.email}\n\nPlease revoke or restrict this coordinator in Monitor Users first before creating a new one.`
                 });
             }
 
@@ -1181,11 +1186,12 @@ async deleteResponse(req, res) {
                     }
                 }
                 
+                const cleanIp = (log.ip && log.ip !== '127.0.0.1' && log.ip !== '::1' && log.ip !== 'localhost') ? log.ip : null;
                 return {
                     id: log.id?.toString(),
                     action: actionWithEmoji,
                     timestamp: log.date ? `${log.date} at ${log.time}` : log.time || 'Unknown',
-                    ip: log.ip || 'N/A'
+                    ip: cleanIp
                 };
             });
             
@@ -1448,10 +1454,11 @@ async requestReport(req, res) {
         //  1) Pending Request save karo
         const requestResult = await db.query(`
             INSERT INTO report_requests 
-            (coordinator_id, report_type, specific_target, deadline, note, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', NOW())
+            (admin_id, coordinator_id, report_type, specific_target, deadline, note, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())
         `, [
-            internalCoordinatorId,
+            adminId,
+            coordinatorUserId,
             finalReportType,
             finalTarget,
             deadline || null,

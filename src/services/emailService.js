@@ -68,12 +68,21 @@ class EmailService {
             }
             console.log('='.repeat(60) + '\n');
 
+            const cleanText = text || (html ? html.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim() : '');
+
             const mailOptions = {
                 from: process.env.SMTP_FROM || `"Smart Desk" <${process.env.SMTP_USER}>`,
+                replyTo: `"Smart Desk" <${process.env.SMTP_USER}>`,
                 to: recipientEmail,
                 subject: subject,
-                text: text || '',
+                text: cleanText,
                 html: html || text || '',
+                headers: {
+                    'X-Priority': '3',
+                    'X-Mailer': 'SmartDesk Academic Portal',
+                    'X-Auto-Response-Suppress': 'OOF, AutoReply',
+                    'Feedback-ID': 'smartdesk:academic:notification'
+                },
                 attachments: attachments || []
             };
 
@@ -172,10 +181,46 @@ class EmailService {
     }
 
     // ==========================================
-    // FIXED: SEND NOTIFICATION EMAIL - Now accepts attachments
     // ==========================================
-    async sendNotificationEmail({ to, recipientName, subject, message, senderRole, attachments }) {
+    // FIXED: SEND NOTIFICATION EMAIL - Accepts attachments & downloadUrl
+    // ==========================================
+    async sendNotificationEmail({ to, recipientName, subject, message, senderRole, attachments, downloadUrl }) {
         const roleEmoji = senderRole === 'Teacher' ? '👨‍🏫' : senderRole === 'Coordinator' ? '👨‍💼' : '📢';
+
+        const formattedAttachments = attachments && attachments.length > 0 
+            ? attachments.map(att => {
+                const item = {
+                    filename: att.filename || att.name || 'attachment',
+                    contentType: att.contentType || att.mimetype || 'application/octet-stream'
+                };
+                if (att.content || att.data) item.content = att.content || att.data;
+                if (att.path) item.path = att.path;
+                return item;
+            })
+            : [];
+
+        const targetDownloadUrl = downloadUrl || (attachments && attachments[0] && (attachments[0].url || attachments[0].downloadUrl));
+        const attachmentName = (attachments && attachments[0] && (attachments[0].filename || attachments[0].name)) || 'Attachment File';
+
+        let downloadCardHtml = '';
+        if (targetDownloadUrl) {
+            downloadCardHtml = `
+                <div style="margin: 20px 0; padding: 16px; background: #F0FDF4; border: 1px solid #86EFAC; border-radius: 10px; text-align: center;">
+                    <div style="font-weight: bold; color: #166534; font-size: 15px; margin-bottom: 6px;">📎 Attached Document Available</div>
+                    <div style="color: #4B5563; font-size: 13px; margin-bottom: 12px;">${attachmentName}</div>
+                    <a href="${targetDownloadUrl}" target="_blank" style="display: inline-block; background: #16A34A; color: #FFFFFF; font-weight: bold; padding: 10px 22px; border-radius: 8px; text-decoration: none; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        ⬇️ Download / Open Attachment
+                    </a>
+                </div>
+            `;
+        } else if (formattedAttachments.length > 0) {
+            downloadCardHtml = `
+                <div style="margin: 20px 0; padding: 14px; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px;">
+                    <div style="font-weight: bold; color: #1E40AF; font-size: 14px;">📎 File Attached: ${attachmentName}</div>
+                    <div style="color: #64748B; font-size: 12px; margin-top: 4px;">You can preview and download this file directly from the attachments section below in Gmail.</div>
+                </div>
+            `;
+        }
 
         const html = `
             <!DOCTYPE html>
@@ -205,6 +250,7 @@ class EmailService {
                         <div class="greeting">Dear ${recipientName || 'User'},</div>
                         <div class="subject">${subject}</div>
                         <div class="message">${message}</div>
+                        ${downloadCardHtml}
                         <div class="sender">
                             <strong>${roleEmoji} Sent by:</strong> ${senderRole || 'System'}
                         </div>
@@ -221,23 +267,27 @@ class EmailService {
             to,
             subject: `${roleEmoji} ${subject}`,
             html,
-            text: `Dear ${recipientName},\n\nSubject: ${subject}\n\n${message}\n\nSent by: ${senderRole || 'System'}\n\nSmart Desk`,
-            attachments: attachments || []
+            text: `Dear ${recipientName},\n\nSubject: ${subject}\n\n${message}\n\nSent by: ${senderRole || 'System'}${targetDownloadUrl ? '\n\nAttachment: ' + targetDownloadUrl : ''}\n\nSmart Desk`,
+            attachments: formattedAttachments
         });
     }
 
     // ==========================================
-    // SEND ANNOUNCEMENT EMAIL (Existing - Enhanced)
+    // SEND ANNOUNCEMENT EMAIL (Existing - Enhanced with Download Button)
     // ==========================================
-    async sendAnnouncementEmail({ to, subject, message, senderName, attachments, inlineImage }) {
+    async sendAnnouncementEmail({ to, subject, message, senderName, attachments, inlineImage, downloadUrl }) {
         const cid = `smartdesk-announcement-${Date.now()}`;
 
         const formattedAttachments = attachments && attachments.length > 0 
-            ? attachments.map(att => ({
-                filename: att.filename || att.name || 'attachment',
-                content: att.content || att.data,
-                contentType: att.contentType || att.mimetype || 'application/octet-stream'
-            }))
+            ? attachments.map(att => {
+                const item = {
+                    filename: att.filename || att.name || 'attachment',
+                    contentType: att.contentType || att.mimetype || 'application/octet-stream'
+                };
+                if (att.content || att.data) item.content = att.content || att.data;
+                if (att.path) item.path = att.path;
+                return item;
+            })
             : [];
 
         if (inlineImage && inlineImage.content) {
@@ -248,6 +298,29 @@ class EmailService {
                 cid: cid,
                 contentDisposition: 'inline'
             });
+        }
+
+        const targetDownloadUrl = downloadUrl || (attachments && attachments[0] && (attachments[0].url || attachments[0].downloadUrl));
+        const attachmentName = (attachments && attachments[0] && (attachments[0].filename || attachments[0].name)) || 'Attachment File';
+
+        let downloadCardHtml = '';
+        if (targetDownloadUrl) {
+            downloadCardHtml = `
+                <div style="margin: 20px 0; padding: 16px; background: #F0FDF4; border: 1px solid #86EFAC; border-radius: 10px; text-align: center;">
+                    <div style="font-weight: bold; color: #166534; font-size: 15px; margin-bottom: 6px;">📎 Attached Document Available</div>
+                    <div style="color: #4B5563; font-size: 13px; margin-bottom: 12px;">${attachmentName}</div>
+                    <a href="${targetDownloadUrl}" target="_blank" style="display: inline-block; background: #16A34A; color: #FFFFFF; font-weight: bold; padding: 10px 22px; border-radius: 8px; text-decoration: none; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        ⬇️ Download / Open Attachment
+                    </a>
+                </div>
+            `;
+        } else if (formattedAttachments.length > 0) {
+            downloadCardHtml = `
+                <div style="margin: 20px 0; padding: 14px; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px;">
+                    <div style="font-weight: bold; color: #1E40AF; font-size: 14px;">📎 File Attached: ${attachmentName}</div>
+                    <div style="color: #64748B; font-size: 12px; margin-top: 4px;">You can preview and download this file directly from the attachments section below in Gmail.</div>
+                </div>
+            `;
         }
 
         const imageHtml = inlineImage && inlineImage.content
@@ -284,6 +357,7 @@ class EmailService {
                         <div class="subject">${subject}</div>
                         <div class="message">${message}</div>
                         ${imageHtml}
+                        ${downloadCardHtml}
                         <div class="meta">Sent via Smart Desk • ${new Date().toLocaleString()}</div>
                     </div>
                     <div class="footer">
@@ -298,7 +372,7 @@ class EmailService {
             to,
             subject: `📢 ${subject}`,
             html,
-            text: `Smart Desk Announcement\n\nSubject: ${subject}\n\n${message}\n\nSent via Smart Desk`,
+            text: `Smart Desk Announcement\n\nSubject: ${subject}\n\n${message}${targetDownloadUrl ? '\n\nAttachment: ' + targetDownloadUrl : ''}\n\nSent via Smart Desk`,
             attachments: formattedAttachments
         });
     }

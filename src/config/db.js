@@ -9,246 +9,118 @@ require('dotenv').config();
 //  
 class Database {
     constructor() {
-        // Database connection settings (host, user, password, database)
         this.config = {
-            // .env se host ly gy, nahi toh localhost use kry gy 
             host: process.env.DB_HOST || 'localhost',
             user: process.env.DB_USER || 'root',
             password: process.env.DB_PASSWORD || 'myra-lab2026',
             database: process.env.DB_NAME || 'smart_desk',
             port: process.env.DB_PORT || 3306,
             ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
-            connectionLimit: 10,
+            waitForConnections: true,
+            connectionLimit: 25,
+            maxIdle: 15,
+            idleTimeout: 60000,
             queueLimit: 0,
-            waitForConnections: true
+            enableKeepAlive: true,
+            keepAliveInitialDelay: 10000
         };
-        
-        this.connection = null;
-        this.isConnected = false;
-        this.retryCount = 0;
-        this.maxRetries = 5;
-        this._loggedError = false;
-        this._reconnecting = false;
-        
-        // Initialize connection
-        this.connect();
-    }
 
-    //  
-    // 1. CREATE CONNECTION (With Retry Limit)
-    //  
-    connect() {
-        //  Prevent multiple simultaneous reconnection attempts
-        if (this._reconnecting) {
-            return;
-        }
-        this._reconnecting = true;
+        this.pool = mysql.createPool(this.config);
+        this.isConnected = true;
+        this._activeTxConn = null;
 
-        try {
-            this.connection = mysql.createConnection(this.config);
-            
-            this.connection.connect((err) => {
-                this._reconnecting = false;
-                
-                if (err) {
-                    //  Only log error once
-                    if (!this._loggedError) {
-                        console.error('❌ MySQL Connection Failed:', err.message);
-                        this._loggedError = true;
-                    }
-                    this.isConnected = false;
-                    
-                    //  Retry with limit
-                    if (this.retryCount < this.maxRetries) {
-                        this.retryCount++;
-                        console.log(`🔄 Retry ${this.retryCount}/${this.maxRetries} in 5 seconds...`);
-                        setTimeout(() => this.connect(), 5000);
-                    } else {
-                        console.error('❌ Max retries reached. Please check MySQL server.');
-                    }
-                    return;
-                }
-                
-                console.log('✅ MySQL Connected Successfully!');
-                this.isConnected = true;
-                this.retryCount = 0;
-                this._loggedError = false;
-            });
-
-            // Handle connection errors
-            this.connection.on('error', (err) => {
-                console.error('❌ MySQL Connection Error:', err.message);
+        // Pre-warm pool on startup
+        this.pool.query('SELECT 1', (err) => {
+            if (err) {
+                console.error('❌ MySQL Pool initial check failed:', err.message);
                 this.isConnected = false;
-                this._loggedError = false;
-                
-                // Auto-reconnect with limit
-                if (this.retryCount < this.maxRetries) {
-                    this.retryCount++;
-                    setTimeout(() => this.connect(), 5000);
-                }
-            });
-
-        } catch (error) {
-            this._reconnecting = false;
-            
-            //  Only log error once
-            if (!this._loggedError) {
-                console.error('❌ MySQL Connection Error:', error.message);
-                this._loggedError = true;
-            }
-            this.isConnected = false;
-            
-            //  Retry with limit
-            if (this.retryCount < this.maxRetries) {
-                this.retryCount++;
-                console.log(`🔄 Retry ${this.retryCount}/${this.maxRetries} in 5 seconds...`);
-                setTimeout(() => this.connect(), 5000);
             } else {
-                console.error('❌ Max retries reached. Please check MySQL server.');
+                console.log('✅ MySQL High-Performance Connection Pool Ready & Pre-warmed!');
+                this.isConnected = true;
             }
-        }
+        });
     }
 
-    //  
-    // 2. GET CONNECTION (Silent Warning)
-    //  
     getConnection() {
-        if (!this.isConnected) {
-            //  Silent warning - only show once
-            if (!this._loggedWarning) {
-                console.warn('⚠️ Database not connected. Attempting to reconnect...');
-                this._loggedWarning = true;
-            }
-            this.connect();
-        } else {
-            this._loggedWarning = false;
-        }
-        return this.connection;
+        return this.pool;
     }
 
-    //  
-    // 3. EXECUTE QUERY (Promise-based)
-    //  
-    query(sql, params = []) {
-        // 
+    // Direct pool query supporting BOTH Promise and Callback patterns
+    query(sql, params = [], callback) {
+        if (typeof params === 'function') {
+            callback = params;
+            params = [];
+        }
+
+        if (typeof callback === 'function') {
+            return this.pool.query(sql, params, callback);
+        }
+
         return new Promise((resolve, reject) => {
-            //  Wait for connection if not connected
-            if (!this.isConnected) {
-                // Try to connect first
-                this.getConnection();
-                
-                // Wait a bit and retry
-                setTimeout(() => {
-                    if (!this.isConnected) {
-                        reject(new Error('Database not connected'));
-                        return;
-                    }
-                    this.connection.query(sql, params, (err, results) => {
-                        if (err) {
-                            reject(err);
-                            return;
-                        }
-                        resolve(results);
-                    });
-                }, 1000);
-                return;
-            }
-            
-            this.connection.query(sql, params, (err, results) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
+            this.pool.query(sql, params, (err, results) => {
+                if (err) return reject(err);
                 resolve(results);
             });
         });
     }
 
-    //  
-    // 4. EXECUTE QUERY WITH CALLBACK (Backward Compatible)
-    //  
     queryCallback(sql, params, callback) {
-        if (!this.isConnected) {
-            callback(new Error('Database not connected'), null);
-            return;
-        }
-        
-        this.connection.query(sql, params, callback);
+        this.pool.query(sql, params, callback);
     }
 
-    //  
-    // 5. CHECK CONNECTION STATUS
-    //  
     isConnectedStatus() {
         return this.isConnected;
     }
 
-    //  
-    // 6. GET CONNECTION STATUS
-    //  
     getStatus() {
         return {
             connected: this.isConnected,
             host: this.config.host,
             database: this.config.database,
             user: this.config.user,
-            retryCount: this.retryCount,
-            maxRetries: this.maxRetries
+            poolLimit: this.config.connectionLimit
         };
     }
 
-    //  
-    // 7. FORCE RECONNECT
-    //  
     reconnect() {
-        console.log('🔄 Forcing reconnection...');
-        this.retryCount = 0;
-        this._loggedError = false;
-        this._loggedWarning = false;
-        this.isConnected = false;
-        this.connect();
+        this.pool.query('SELECT 1', (err) => {
+            this.isConnected = !err;
+        });
     }
 
-    //  
-    // 8. CLOSE CONNECTION
-    //  
     disconnect() {
-        if (this.connection) {
-            this.connection.end((err) => {
-                if (err) {
-                    console.error('❌ Error disconnecting:', err.message);
-                    return;
-                }
-                console.log('✅ MySQL Disconnected Successfully!');
+        if (this.pool) {
+            this.pool.end((err) => {
+                if (err) console.error('❌ Error closing pool:', err.message);
+                else console.log('✅ MySQL Pool Closed Successfully!');
                 this.isConnected = false;
             });
         }
     }
 
-    //  
-    // 9. TRANSACTION HELPERS
-    //  
     beginTransaction() {
         return new Promise((resolve, reject) => {
-            if (!this.isConnected) {
-                reject(new Error('Database not connected'));
-                return;
-            }
-            this.connection.beginTransaction((err) => {
-                if (err) reject(err);
-                resolve();
+            this.pool.getConnection((err, conn) => {
+                if (err) return reject(err);
+                conn.beginTransaction((txErr) => {
+                    if (txErr) {
+                        conn.release();
+                        return reject(txErr);
+                    }
+                    this._activeTxConn = conn;
+                    resolve(conn);
+                });
             });
         });
     }
 
     commit() {
         return new Promise((resolve, reject) => {
-            if (!this.isConnected) {
-                reject(new Error('Database not connected'));
-                return;
-            }
-            this.connection.commit((err) => {
-                if (err) reject(err);
+            if (!this._activeTxConn) return resolve();
+            this._activeTxConn.commit((err) => {
+                this._activeTxConn.release();
+                this._activeTxConn = null;
+                if (err) return reject(err);
                 resolve();
             });
         });
@@ -256,29 +128,42 @@ class Database {
 
     rollback() {
         return new Promise((resolve, reject) => {
-            if (!this.isConnected) {
-                reject(new Error('Database not connected'));
-                return;
-            }
-            this.connection.rollback((err) => {
-                if (err) reject(err);
+            if (!this._activeTxConn) return resolve();
+            this._activeTxConn.rollback((err) => {
+                this._activeTxConn.release();
+                this._activeTxConn = null;
+                if (err) return reject(err);
                 resolve();
             });
         });
     }
 
-    //  
-    // 10. TRANSACTION WRAPPER
-    //  
     async transaction(callback) {
+        const conn = await new Promise((resolve, reject) => {
+            this.pool.getConnection((err, c) => (err ? reject(err) : resolve(c)));
+        });
+
         try {
-            await this.beginTransaction();
-            const result = await callback(this);
-            await this.commit();
+            await new Promise((resolve, reject) => {
+                conn.beginTransaction(err => (err ? reject(err) : resolve()));
+            });
+
+            const txWrapper = {
+                query: (sql, params = []) => new Promise((resolve, reject) => {
+                    conn.query(sql, params, (err, res) => (err ? reject(err) : resolve(res)));
+                })
+            };
+
+            const result = await callback(txWrapper);
+            await new Promise((resolve, reject) => {
+                conn.commit(err => (err ? reject(err) : resolve()));
+            });
             return result;
         } catch (error) {
-            await this.rollback();
+            await new Promise(r => conn.rollback(() => r()));
             throw error;
+        } finally {
+            conn.release();
         }
     }
 }

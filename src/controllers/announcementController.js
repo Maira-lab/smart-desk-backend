@@ -172,7 +172,8 @@ class AnnouncementController {
                             subject: subject,
                             message: message,
                             senderName: senderName,
-                            attachments: emailAttachments
+                            attachments: emailAttachments,
+                            downloadUrl: attachments.length > 0 ? attachments[0].url : null
                         });
                         if (result.success) {
                             emailSent++;

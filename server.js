@@ -202,11 +202,37 @@ class Server {
         const ar = express.Router();
         ar.use(auth.authenticate, auth.studentOnly);
 
-        // LIST (Weekly / Monthly)
+        // LIST (Weekly / Monthly) - WITH SEARCH & FILTER
         ar.get('/', async (req, res) => {
             try {
                 const studentId = req.user.user_id;
                 const period = req.query.period || 'weekly';
+                const { class_name, roll_no, search } = req.query;
+
+                const studentInfo = await db.query(`
+                    SELECT full_name, roll_no, class_name, semester, section, email 
+                    FROM users WHERE user_id = ?
+                `, [studentId]);
+                const student = studentInfo[0] || {};
+
+                // If filtering by roll_no and it doesn't match this student's roll_no
+                if (roll_no && roll_no.trim() && student.roll_no && !student.roll_no.toLowerCase().includes(roll_no.trim().toLowerCase())) {
+                    return res.json({ success: true, reports: [], count: 0, student });
+                }
+
+                let whereExtra = '';
+                let params = [studentId, period];
+
+                if (class_name && class_name.trim()) {
+                    whereExtra += ` AND (c.class_name LIKE ? OR c.subject_name LIKE ?)`;
+                    params.push(`%${class_name.trim()}%`, `%${class_name.trim()}%`);
+                }
+
+                if (search && search.trim()) {
+                    whereExtra += ` AND (c.class_name LIKE ? OR c.subject_name LIKE ? OR t.full_name LIKE ?)`;
+                    params.push(`%${search.trim()}%`, `%${search.trim()}%`, `%${search.trim()}%`);
+                }
+
                 const rows = await db.query(`
                     SELECT ar.report_id AS id, ar.period, ar.remarks, ar.created_at,
                            ar.mid_term_marks, ar.quiz_marks, ar.assignment_marks, ar.class_activity,
@@ -215,8 +241,8 @@ class Server {
                     FROM academic_reports ar
                     JOIN classrooms c ON ar.classroom_id = c.classroom_id
                     LEFT JOIN users t ON ar.created_by = t.user_id
-                    WHERE ar.student_id = ? AND ar.period = ?
-                    ORDER BY ar.created_at DESC`, [studentId, period]);
+                    WHERE ar.student_id = ? AND ar.period = ? ${whereExtra}
+                    ORDER BY ar.created_at DESC`, params);
 
                 const reports = [];
                 for (const r of rows) {
@@ -232,6 +258,7 @@ class Server {
                     reports.push({
                         id: String(r.id),
                         subject: r.subject || 'Subject',
+                        className: r.className || '',
                         teacherName: r.teacherName || 'Teacher',
                         grade: mk[0]?.grade || 'N/A',
                         attendance: attendance === null ? 'N/A' : attendance,
@@ -247,7 +274,7 @@ class Server {
                         period: r.period
                     });
                 }
-                res.json({ success: true, reports, count: reports.length });
+                res.json({ success: true, reports, count: reports.length, student });
             } catch (e) {
                 console.error('Get reports error:', e);
                 res.status(500).json({ success: false, error: 'Server error: ' + e.message });

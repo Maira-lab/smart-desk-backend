@@ -188,9 +188,10 @@ class TeacherController {
     async getMyClasses(req, res) {
         try {
             const teacherId = req.user?.user_id;
-            if (!teacherId) return res.status(401).json({ success: false, error: 'User not authenticated' });
-            const query = `SELECT c.classroom_id, c.class_name, c.class_name AS className, c.subject_name AS subjectName, COALESCE(c.semester, sem.semester_code, '') AS semester, c.department_name, c.section, c.subject_name, c.is_active, ct.subject_name AS assigned_subject, (SELECT COUNT(*) FROM enrollments WHERE classroom_id = c.classroom_id AND status = 'Active') AS total_students FROM classrooms c LEFT JOIN semesters sem ON c.semester_id = sem.semester_id JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id LEFT JOIN teachers t ON ct.teacher_id = t.teacher_id OR ct.teacher_id = t.user_id WHERE (t.user_id = ? OR ct.teacher_id = ?) AND c.is_active = TRUE ORDER BY c.created_at DESC`;
-            const results = await db.query(query, [teacherId, teacherId]);
+            const nameResult = await db.query('SELECT full_name FROM users WHERE user_id = ?', [teacherId]);
+            const teacherName = nameResult[0]?.full_name || '';
+            const query = `SELECT DISTINCT c.classroom_id, c.class_name, c.class_name AS className, c.subject_name AS subjectName, COALESCE(c.semester, sem.semester_code, '') AS semester, c.department_name, c.section, c.subject_name, c.is_active, ct.subject_name AS assigned_subject, (SELECT COUNT(*) FROM enrollments WHERE classroom_id = c.classroom_id AND status = 'Active') AS total_students FROM classrooms c LEFT JOIN semesters sem ON c.semester_id = sem.semester_id LEFT JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id LEFT JOIN teachers t ON ct.teacher_id = t.teacher_id OR ct.teacher_id = t.user_id WHERE (t.user_id = ? OR ct.teacher_id = ? OR LOWER(TRIM(c.teacher_name)) = LOWER(TRIM(?))) AND c.is_active = TRUE ORDER BY c.created_at DESC`;
+            const results = await db.query(query, [teacherId, teacherId, teacherName]);
             res.json({ success: true, classes: results, count: results.length });
         } catch (error) { res.status(500).json({ success: false, error: 'Server error: ' + error.message }); }
     }
@@ -294,18 +295,31 @@ class TeacherController {
         } catch (error) { res.status(500).json({ success: false, error: 'Server error: ' + error.message }); }
     }
 
-    // 7. MARK BULK ATTENDANCE - ✅ DATE FIXED + PER-STUDENT EMAIL
+    // 7. MARK BULK ATTENDANCE - ✅ DATE FIXED + PER-STUDENT EMAIL + NOTIFY ONLY SUPPORT
     async markBulkAttendance(req, res) {
         try {
-            const { classroom_id, day, attendance } = req.body;
+            const { classroom_id, day, attendance, notify_only, send_email } = req.body;
             const teacherId = req.user?.user_id;
             
             const attendance_date = toMySQLDate(req.body.attendance_date);
             const week_start = toMySQLDate(req.body.week_start);
             const week_end = toMySQLDate(req.body.week_end);
             
-            if (!classroom_id || !attendance || !Array.isArray(attendance) || attendance.length === 0 || !attendance_date) {
-                return res.status(400).json({ success: false, error: 'Missing parameters' });
+            if (!classroom_id || !attendance_date) {
+                return res.status(400).json({ success: false, error: 'Missing parameters: classroom_id and attendance_date required' });
+            }
+
+            let itemsToProcess = Array.isArray(attendance) && attendance.length > 0 ? attendance : [];
+            if (notify_only && itemsToProcess.length === 0) {
+                const existing = await db.query(
+                    `SELECT student_id, status FROM attendance WHERE classroom_id = ? AND attendance_date = ?`,
+                    [classroom_id, attendance_date]
+                );
+                itemsToProcess = existing;
+            }
+
+            if (itemsToProcess.length === 0) {
+                return res.status(400).json({ success: false, error: 'No attendance records provided or found for this date' });
             }
             
             const nameResult = await db.query('SELECT full_name FROM users WHERE user_id = ?', [teacherId]);
@@ -323,17 +337,25 @@ class TeacherController {
             let markedCount = 0;
             let emailSentCount = 0;
             
-            for (const item of attendance) {
+            for (const item of itemsToProcess) {
                 const { student_id, status } = item;
-                if (!student_id || !status || !['present', 'absent', 'late'].includes(status)) continue;
+                if (!student_id || !status) continue;
+                const sLower = String(status).trim().toLowerCase();
+                if (!['present', 'absent', 'late', 'leave'].includes(sLower)) continue;
+                const normStatus = sLower.charAt(0).toUpperCase() + sLower.slice(1);
                 
-                const checkResult = await db.query(`SELECT attendance_id FROM attendance WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`, [classroom_id, student_id, attendance_date]);
-                if (checkResult.length > 0) {
-                    await db.query(`UPDATE attendance SET status = ?, marked_by = ?, marked_at = CURRENT_TIMESTAMP WHERE attendance_id = ?`, [status, teacherId, checkResult[0].attendance_id]);
-                } else {
-                    await db.query(`INSERT INTO attendance (classroom_id, student_id, attendance_date, status, marked_by) VALUES (?, ?, ?, ?, ?)`, [classroom_id, student_id, attendance_date, status, teacherId]);
+                if (!notify_only) {
+                    const checkResult = await db.query(`SELECT attendance_id FROM attendance WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`, [classroom_id, student_id, attendance_date]);
+                    if (checkResult.length > 0) {
+                        await db.query(`UPDATE attendance SET status = ?, marked_by = ?, marked_at = CURRENT_TIMESTAMP WHERE attendance_id = ?`, [normStatus, teacherId, checkResult[0].attendance_id]);
+                    } else {
+                        await db.query(`INSERT INTO attendance (classroom_id, student_id, attendance_date, status, marked_by) VALUES (?, ?, ?, ?, ?)`, [classroom_id, student_id, attendance_date, normStatus, teacherId]);
+                    }
+                    markedCount++;
                 }
-                markedCount++;
+
+                // If send_email is false, do not send emails or push
+                if (send_email === false) continue;
                 
                 try {
                     const studentInfo = await db.query('SELECT email, full_name FROM users WHERE user_id = ?', [student_id]);
@@ -1074,6 +1096,7 @@ try {
                         content: attachedFile.buffer,
                         contentType: attachedFile.mimetype
                     }];
+                    emailPayload.downloadUrl = savedFileUrl;
                 }
                 await emailService.sendAnnouncementEmail(emailPayload);
                 console.log('✅ Teacher notification email sent to:', recipient.email);
@@ -1156,6 +1179,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                                 content: attachedFile.buffer,
                                 contentType: attachedFile.mimetype
                             }];
+                            emailPayload.downloadUrl = savedFileUrl;
                         }
                         await emailService.sendAnnouncementEmail(emailPayload);
                     } catch (emailErr) {
@@ -1192,42 +1216,24 @@ const savedFileName = Date.now() + '-' + safeOriginal;
             
             console.log(`\n🔍 [Method 31] Teacher: ${teacherName} (ID: ${teacherId})`);
             
-            const query1 = `
+            const queryUnified = `
                 SELECT DISTINCT c.classroom_id AS id, c.subject_name AS subject, c.class_name,
                     COALESCE(c.semester, sem.semester_code, '') AS semester, c.section, c.department_name
                 FROM classrooms c
                 LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
-                JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id
+                LEFT JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id
                 LEFT JOIN teachers t ON ct.teacher_id = t.teacher_id OR ct.teacher_id = t.user_id
-                WHERE (t.user_id = ? OR ct.teacher_id = ?) AND c.is_active = TRUE
+                WHERE (
+                    t.user_id = ? 
+                    OR ct.teacher_id = ? 
+                    OR (TRIM(?) != '' AND LOWER(TRIM(c.teacher_name)) = LOWER(TRIM(?)))
+                    OR (TRIM(?) != '' AND LOWER(c.teacher_name) LIKE LOWER(CONCAT('%', ?, '%')))
+                ) AND c.is_active = TRUE
+                ORDER BY c.subject_name ASC, c.class_name ASC
             `;
-            let results = await db.query(query1, [teacherId, teacherId]);
-            console.log(`   Strategy 1 (classroom_teachers): ${results.length} classes`);
-            
-            if (results.length === 0 && teacherName) {
-                const query2 = `
-                    SELECT DISTINCT c.classroom_id AS id, c.subject_name AS subject, c.class_name,
-                        COALESCE(c.semester, sem.semester_code, '') AS semester, c.section, c.department_name
-                    FROM classrooms c
-                    LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
-                    WHERE LOWER(TRIM(c.teacher_name)) = LOWER(TRIM(?)) AND c.is_active = TRUE
-                `;
-                results = await db.query(query2, [teacherName]);
-                console.log(`   Strategy 2 (teacher_name): ${results.length} classes`);
-            }
-            
-            if (results.length === 0 && teacherName) {
-                const query3 = `
-                    SELECT DISTINCT c.classroom_id AS id, c.subject_name AS subject, c.class_name,
-                        COALESCE(c.semester, sem.semester_code, '') AS semester, c.section, c.department_name
-                    FROM classrooms c
-                    LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
-                    WHERE LOWER(c.teacher_name) LIKE LOWER(CONCAT('%', ?, '%')) AND c.is_active = TRUE
-                `;
-                results = await db.query(query3, [teacherName]);
-                console.log(`   Strategy 3 (LIKE): ${results.length} classes`);
-            }
-            
+            let results = await db.query(queryUnified, [teacherId, teacherId, teacherName, teacherName, teacherName, teacherName]);
+            console.log(`   Classes found: ${results.length}`);
+
             if (results.length === 0) {
                 console.log(`   ❌ No classes found for teacher`);
                 return res.json({ success: true, classes: [], count: 0 });
@@ -1321,13 +1327,15 @@ const savedFileName = Date.now() + '-' + safeOriginal;
             const verifyResult = await db.query(verifyQuery, [classId, teacherId, teacherId, teacherName]);
             if (verifyResult.length === 0) return res.status(403).json({ success: false, error: 'You do not have access to this student' });
 
+            const cleanRemarks = remarks ? String(remarks).replace(/[^\x20-\x7E\u0600-\u06FF\s.,!?:;()\-]/g, '').trim() : null;
+
             const existing = await db.query(`SELECT report_id FROM academic_reports WHERE student_id = ? AND classroom_id = ? AND period = ?`, [studentId, classId, period]);
             let reportId;
             if (existing.length > 0) {
-                await db.query(`UPDATE academic_reports SET mid_term_marks = ?, quiz_marks = ?, assignment_marks = ?, class_activity = ?, curriculum = ?, subject_marks = ?, activity = ?, behavior = ?, remarks = ?, access_granted = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE student_id = ? AND classroom_id = ? AND period = ?`, [midTermMarks || null, quizMarks || null, assignmentMarks || null, classActivity || null, curriculum || null, subjectMarks || null, activity || null, behavior || null, remarks || null, accessGranted || false, teacherId, studentId, classId, period]);
+                await db.query(`UPDATE academic_reports SET mid_term_marks = ?, quiz_marks = ?, assignment_marks = ?, class_activity = ?, curriculum = ?, subject_marks = ?, activity = ?, behavior = ?, remarks = ?, access_granted = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE student_id = ? AND classroom_id = ? AND period = ?`, [midTermMarks || null, quizMarks || null, assignmentMarks || null, classActivity || null, curriculum || null, subjectMarks || null, activity || null, behavior || null, cleanRemarks, accessGranted || false, teacherId, studentId, classId, period]);
                 reportId = existing[0].report_id;
             } else {
-                const result = await db.query(`INSERT INTO academic_reports (student_id, classroom_id, period, report_type, mid_term_marks, quiz_marks, assignment_marks, class_activity, curriculum, subject_marks, activity, behavior, remarks, access_granted, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`, [studentId, classId, period, reportType || 'weekly', midTermMarks || null, quizMarks || null, assignmentMarks || null, classActivity || null, curriculum || null, subjectMarks || null, activity || null, behavior || null, remarks || null, accessGranted || false, teacherId]);
+                const result = await db.query(`INSERT INTO academic_reports (student_id, classroom_id, period, report_type, mid_term_marks, quiz_marks, assignment_marks, class_activity, curriculum, subject_marks, activity, behavior, remarks, access_granted, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`, [studentId, classId, period, reportType || 'weekly', midTermMarks || null, quizMarks || null, assignmentMarks || null, classActivity || null, curriculum || null, subjectMarks || null, activity || null, behavior || null, cleanRemarks, accessGranted || false, teacherId]);
                 reportId = result.insertId;
             }
 
@@ -1673,13 +1681,22 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                 }
             }
 
+            // Sanitize pass rate
+            if (finalPass) {
+                const m = String(finalPass).match(/(\d+(?:\.\d+)?)/);
+                finalPass = m ? `${m[1]}%` : String(finalPass).replace(/[^\x20-\x7E]/g, '').trim();
+            }
+
+            // Sanitize remarks
+            const cleanRemarks = teacherRemarks ? String(teacherRemarks).replace(/[^\x20-\x7E\u0600-\u06FF\s.,!?:;()\-]/g, '').trim() : '';
+
             const existing = await db.query(`SELECT report_id FROM performance_reports WHERE classroom_id = ?`, [classId]);
             if (existing.length > 0) {
                 await db.query(`UPDATE performance_reports SET average_grade=?, pass_rate=?, top_performer=?, teacher_remarks=?, access_granted=?, detailed_data=?, updated_at=CURRENT_TIMESTAMP WHERE classroom_id=?`,
-                    [finalAvg || 'N/A', finalPass || 'N/A', finalTop || 'N/A', teacherRemarks || '', accessGranted ? 1 : 0, detailedData, classId]);
+                    [finalAvg || 'N/A', finalPass || 'N/A', finalTop || 'N/A', cleanRemarks, accessGranted ? 1 : 0, detailedData, classId]);
             } else {
                 await db.query(`INSERT INTO performance_reports (classroom_id, average_grade, pass_rate, top_performer, teacher_remarks, access_granted, detailed_data) VALUES (?,?,?,?,?,?,?)`,
-                    [classId, finalAvg || 'N/A', finalPass || 'N/A', finalTop || 'N/A', teacherRemarks || '', accessGranted ? 1 : 0, detailedData]);
+                    [classId, finalAvg || 'N/A', finalPass || 'N/A', finalTop || 'N/A', cleanRemarks, accessGranted ? 1 : 0, detailedData]);
             }
             res.json({ success: true, message: 'Class performance saved successfully!' });
         } catch (error) { res.status(500).json({ success: false, error: 'Server error: ' + error.message }); }

@@ -32,26 +32,45 @@ class PushService {
                 return { success: false, error: 'No token' };
             }
 
-            const response = await fetch('https://api.onesignal.com/notifications', {
+            const payload = {
+                app_id: ONESIGNAL_APP_ID,
+                include_subscription_ids: [pushToken],
+                headings: { en: title },
+                contents: { en: message },
+                data: data,
+                priority: 10,
+                ttl: 86400
+            };
+
+            let response = await fetch('https://api.onesignal.com/notifications', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Key ${ONESIGNAL_API_KEY}`,
                     'Content-Type': 'application/json',
                     'Accept': 'application/json'
                 },
-                body: JSON.stringify({
-                    app_id: ONESIGNAL_APP_ID,
-                    include_subscription_ids: [pushToken],
-                    headings: { en: title },
-                    contents: { en: message },
-                    data: data,
-                    priority: 10,
-                    ttl: 86400
-                })
+                body: JSON.stringify(payload)
             });
 
-            const result = await response.json();
-            
+            let result = await response.json();
+
+            // Fallback to include_player_ids if include_subscription_ids fails
+            if (!result.id) {
+                payload.include_player_ids = [pushToken];
+                delete payload.include_subscription_ids;
+
+                response = await fetch('https://api.onesignal.com/notifications', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Key ${ONESIGNAL_API_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                result = await response.json();
+            }
+
             if (result.id) {
                 console.log('✅ Push sent via OneSignal:', result.id);
                 return { success: true, result: result };
