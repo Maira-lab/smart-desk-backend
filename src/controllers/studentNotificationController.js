@@ -265,15 +265,17 @@ class StudentNotificationController {
                 savedFileUrl
             ]);
 
-            //   PUSH NOTIFICATION TO ORIGINAL SENDER (Teacher/Admin/Coordinator)
+            //   PUSH NOTIFICATION TO ORIGINAL SENDER (Teacher/Admin/Coordinator - Mobile + Web)
             try {
                 const senderToken = await db.query(
-                    'SELECT push_token, full_name FROM users WHERE user_id = ?',
+                    'SELECT push_token, web_push_token, full_name FROM users WHERE user_id = ?',
                     [original.sender_id]
                 );
-                if (senderToken.length > 0 && senderToken[0].push_token) {
+                if (senderToken.length > 0) {
                     const pushResult = await pushService.sendAnnouncementPush({
+                        userId: original.sender_id,
                         pushToken: senderToken[0].push_token,
+                        webPushToken: senderToken[0].web_push_token,
                         title: `Reply from ${studentName}`,
                         message: reply_message 
                             ? reply_message.trim().substring(0, 100) 
@@ -285,10 +287,10 @@ class StudentNotificationController {
                             'UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?',
                             [result.insertId]
                         );
-                        console.log(`📱✅ Reply push sent to ${senderToken[0].full_name}`);
+                        console.log(`📱💻✅ Reply push sent to ${senderToken[0].full_name}`);
                     }
                 } else {
-                    console.log(`📱⚠️ No push token for ${original.sender_role} ${original.sender_id}`);
+                    console.log(`📱⚠️ No user record for ${original.sender_role} ${original.sender_id}`);
                 }
             } catch (pushErr) {
                 console.error('⚠️ Reply push error:', pushErr.message);
@@ -476,15 +478,17 @@ class StudentNotificationController {
                 savedFileUrl
             ]);
 
-            //   PUSH NOTIFICATION TO TEACHER (Assignment creator)
+            //   PUSH NOTIFICATION TO TEACHER (Assignment creator - Mobile + Web)
             try {
                 const teacherToken = await db.query(
-                    'SELECT push_token, full_name FROM users WHERE user_id = ?',
+                    'SELECT push_token, web_push_token, full_name FROM users WHERE user_id = ?',
                     [assignment.sender_id]
                 );
-                if (teacherToken.length > 0 && teacherToken[0].push_token) {
+                if (teacherToken.length > 0) {
                     const pushResult = await pushService.sendAnnouncementPush({
+                        userId: assignment.sender_id,
                         pushToken: teacherToken[0].push_token,
+                        webPushToken: teacherToken[0].web_push_token,
                         title: `📝 Assignment Submitted: ${studentName}`,
                         message: `Assignment: ${assignment.title}${savedFileUrl ? ' (📎 File attached)' : ''}`,
                         announcementId: subResult.insertId
@@ -494,10 +498,10 @@ class StudentNotificationController {
                             'UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?',
                             [subResult.insertId]
                         );
-                        console.log(`📱✅ Assignment submit push sent to ${teacherToken[0].full_name}`);
+                        console.log(`📱💻✅ Assignment submit push sent to ${teacherToken[0].full_name}`);
                     }
                 } else {
-                    console.log(`📱⚠️ No push token for teacher ${assignment.sender_id}`);
+                    console.log(`📱⚠️ No user record for teacher ${assignment.sender_id}`);
                 }
             } catch (pushErr) {
                 console.error('⚠️ Assignment push error:', pushErr.message);

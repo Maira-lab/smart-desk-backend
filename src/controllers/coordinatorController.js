@@ -1632,22 +1632,24 @@ Please check your schedule for details.`;
             notifMessage
         ]);
         
-        //   PUSH NOTIFICATION TO TEACHER
+        //   PUSH NOTIFICATION TO TEACHER (Mobile + Web)
         try {
-            const teacherToken = await db.query('SELECT push_token FROM users WHERE user_id = ?', [teacher_id]);
-            if (teacherToken.length > 0 && teacherToken[0].push_token) {
+            const teacherToken = await db.query('SELECT push_token, web_push_token FROM users WHERE user_id = ?', [teacher_id]);
+            if (teacherToken.length > 0) {
                 const pushResult = await pushService.sendAnnouncementPush({
+                    userId: teacher_id,
                     pushToken: teacherToken[0].push_token,
+                    webPushToken: teacherToken[0].web_push_token,
                     title: notifTitle,
                     message: `You have been assigned to teach ${classData.subject_name}.`,
                     announcementId: notifResult.insertId
                 });
                 if (pushResult && pushResult.success) {
                     await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [notifResult.insertId]);
-                    console.log(`📱✅ Assignment push sent to ${teacher.full_name}`);
+                    console.log(`📱💻✅ Assignment push sent to ${teacher.full_name}`);
                 }
             } else {
-                console.log(`📱⚠️ No push token for teacher ${teacher_id}`);
+                console.log(`📱⚠️ No user record for teacher ${teacher_id}`);
             }
         } catch (pushErr) {
             console.error('⚠️ Assignment push error:', pushErr.message);
@@ -2069,19 +2071,21 @@ Please check your schedule for details.`;
                 notifMessage
             ]);
             
-            //   PUSH NOTIFICATION TO STUDENT
+            //   PUSH NOTIFICATION TO STUDENT (Mobile + Web)
             try {
-                const stToken = await db.query('SELECT push_token FROM users WHERE user_id = ?', [student.id]);
-                if (stToken.length > 0 && stToken[0].push_token) {
+                const stToken = await db.query('SELECT push_token, web_push_token FROM users WHERE user_id = ?', [student.id]);
+                if (stToken.length > 0) {
                     const pushResult = await pushService.sendAnnouncementPush({
+                        userId: student.id,
                         pushToken: stToken[0].push_token,
+                        webPushToken: stToken[0].web_push_token,
                         title: notifTitle,
                         message: `You have been enrolled in ${classData.subject_name}.`,
                         announcementId: notifResult.insertId
                     });
                     if (pushResult && pushResult.success) {
                         await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [notifResult.insertId]);
-                        console.log(`📱✅ Enrollment push sent to ${student.name}`);
+                        console.log(`📱💻✅ Enrollment push sent to ${student.name}`);
                     }
                 }
             } catch (pushErr) {
@@ -2816,19 +2820,21 @@ Please review the report in your dashboard.`;
                 notifMessage
             ]);
             
-            //   PUSH NOTIFICATION TO ADMIN
+            //   PUSH NOTIFICATION TO ADMIN (Mobile + Web)
             try {
-                const adminToken = await db.query('SELECT push_token FROM users WHERE user_id = ?', [adminUserId]);
-                if (adminToken.length > 0 && adminToken[0].push_token) {
+                const adminToken = await db.query('SELECT push_token, web_push_token FROM users WHERE user_id = ?', [adminUserId]);
+                if (adminToken.length > 0) {
                     const pushResult = await pushService.sendAnnouncementPush({
+                        userId: adminUserId,
                         pushToken: adminToken[0].push_token,
+                        webPushToken: adminToken[0].web_push_token,
                         title: notifTitle,
                         message: `Coordinator has submitted a report. Request #${requestId}`,
                         announcementId: notifResult.insertId
                     });
                     if (pushResult && pushResult.success) {
                         await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [notifResult.insertId]);
-                        console.log(`📱✅ Report submit push sent to Admin`);
+                        console.log(`📱💻✅ Report submit push sent to Admin`);
                     }
                 }
             } catch (pushErr) {
@@ -2981,7 +2987,7 @@ Please review the report in your dashboard.`;
             //    FIX 1: Handle 'admin-office' or role-based targeting properly
             if (recipientId === 'admin-office' || recipientType === 'admin') {
                 const admins = await db.query(
-                    `SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token 
+                    `SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token, u.web_push_token 
                      FROM users u 
                      WHERE u.user_role = 'Admin' AND u.status = 'Active'`
                 );
@@ -2993,7 +2999,7 @@ Please review the report in your dashboard.`;
                                       recipientType === 'student' ? 'JOIN students s ON u.user_id = s.user_id' : '';
                 
                 const recipientQuery = `
-                    SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token
+                    SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token, u.web_push_token
                     FROM users u
                     ${roleCondition}
                     WHERE u.user_id = ? AND u.status = 'Active'
@@ -3004,7 +3010,7 @@ Please review the report in your dashboard.`;
             //    FIX 3: Handle specific email provided directly
             else if (recipientEmail) {
                 const recipients = await db.query(
-                    `SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token 
+                    `SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token, u.web_push_token 
                      FROM users u 
                      WHERE u.email = ? AND u.status = 'Active'`,
                     [recipientEmail]
@@ -3108,12 +3114,14 @@ Please review the report in your dashboard.`;
                     }
                 }
 
-                // 3. Send Push (Non-fatal)
+                // 3. Send Push (Non-fatal, Mobile + Web)
                 const shouldSendPush = sendPush === 'true' || sendPush === true || sendPush === '1';
-                if (shouldSendPush && recipient.push_token && notificationId) {
+                if (shouldSendPush && (recipient.user_id || recipient.push_token || recipient.web_push_token) && notificationId) {
                     try {
                         const pushResult = await pushService.sendAnnouncementPush({
+                            userId: recipient.user_id,
                             pushToken: recipient.push_token,
+                            webPushToken: recipient.web_push_token,
                             title: subject,
                             message: message,
                             announcementId: notificationId
@@ -3241,7 +3249,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
             const recipientRole = roleMap[recipientType];
 
             const recipientQuery = `
-                SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token
+                SELECT u.user_id, u.full_name, u.email, u.user_role, u.push_token, u.web_push_token
                 FROM users u
                 WHERE u.user_id IN (${placeholders}) AND u.status = 'Active' AND u.user_role = ?
             `;
@@ -3319,12 +3327,14 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         }
                     }
 
-                    // Push
+                    // Push (Mobile + Web)
                     let pushSent = false;
-                    if (shouldSendPush && recipient.push_token) {
+                    if (shouldSendPush && (recipient.user_id || recipient.push_token || recipient.web_push_token)) {
                         try {
                             const pushResult = await pushService.sendAnnouncementPush({
+                                userId: recipient.user_id,
                                 pushToken: recipient.push_token,
+                                webPushToken: recipient.web_push_token,
                                 title: subject,
                                 message: message,
                                 announcementId: notificationId
@@ -3762,12 +3772,14 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                     console.error('⚠️ Reply email error:', emailErr.message);
                 }
 
-                //   PUSH NOTIFICATION TO REPLY RECIPIENT
+                //   PUSH NOTIFICATION TO REPLY RECIPIENT (Mobile + Web)
                 try {
-                    const targetToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [targetId]);
-                    if (targetToken.length > 0 && targetToken[0].push_token) {
+                    const targetToken = await db.query('SELECT push_token, web_push_token, full_name FROM users WHERE user_id = ?', [targetId]);
+                    if (targetToken.length > 0) {
                         const pushResult = await pushService.sendAnnouncementPush({
+                            userId: targetId,
                             pushToken: targetToken[0].push_token,
+                            webPushToken: targetToken[0].web_push_token,
                             title: 'Reply from Coordinator',
                             message: message.trim().substring(0, 100) + (savedFileUrl ? ' 📎' : ''),
                             announcementId: replyNotifId
@@ -3776,7 +3788,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                             if (replyNotifId) {
                                 await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [replyNotifId]);
                             }
-                            console.log(`📱✅ Reply push sent to ${targetToken[0].full_name}`);
+                            console.log(`📱💻✅ Reply push sent to ${targetToken[0].full_name}`);
                         }
                     }
                 } catch (pushErr) {

@@ -19,64 +19,118 @@ class PushService {
     }
 
     //  
-    // SEND PUSH NOTIFICATION VIA ONESIGNAL
+    // SEND PUSH NOTIFICATION VIA ONESIGNAL (MOBILE + WEB)
     //  
-    async sendPushNotification({ pushToken, title, message, data = {} }) {
+    async sendPushNotification({ userId, pushToken, webPushToken, title, message, data = {} }) {
         try {
             if (!this.initialized) {
                 return { success: false, error: 'Push service not initialized' };
             }
 
-            if (!pushToken) {
-                console.log('⚠️ No push token provided');
-                return { success: false, error: 'No token' };
+            let sentSuccess = false;
+            let lastResult = null;
+
+            // 1. Target via external_id (Reaches all logged-in devices of user: Mobile + Web)
+            if (userId) {
+                try {
+                    const aliasPayload = {
+                        app_id: ONESIGNAL_APP_ID,
+                        include_aliases: { external_id: [String(userId)] },
+                        target_channel: 'push',
+                        headings: { en: title },
+                        contents: { en: message },
+                        data: data,
+                        priority: 10,
+                        ttl: 86400
+                    };
+
+                    const response = await fetch('https://api.onesignal.com/notifications', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Key ${ONESIGNAL_API_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify(aliasPayload)
+                    });
+
+                    const result = await response.json();
+                    if (result.id) {
+                        console.log(`✅ Push delivered via external_id (${userId}):`, result.id);
+                        sentSuccess = true;
+                        lastResult = result;
+                    } else {
+                        console.log(`ℹ️ external_id push notice for user ${userId}:`, result.errors || result);
+                    }
+                } catch (e) {
+                    console.warn(`⚠️ external_id push error for user ${userId}:`, e.message);
+                }
             }
 
-            const payload = {
-                app_id: ONESIGNAL_APP_ID,
-                include_subscription_ids: [pushToken],
-                headings: { en: title },
-                contents: { en: message },
-                data: data,
-                priority: 10,
-                ttl: 86400
-            };
+            // 2. Direct subscription IDs (pushToken for mobile, webPushToken for web)
+            const subIds = [];
+            const isValid = (id) => id && typeof id === 'string' && !id.startsWith('local-');
 
-            let response = await fetch('https://api.onesignal.com/notifications', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Key ${ONESIGNAL_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
+            if (isValid(pushToken)) subIds.push(pushToken);
+            if (isValid(webPushToken) && !subIds.includes(webPushToken)) subIds.push(webPushToken);
 
-            let result = await response.json();
+            if (subIds.length > 0) {
+                try {
+                    const subPayload = {
+                        app_id: ONESIGNAL_APP_ID,
+                        include_subscription_ids: subIds,
+                        headings: { en: title },
+                        contents: { en: message },
+                        data: data,
+                        priority: 10,
+                        ttl: 86400
+                    };
 
-            // Fallback to include_player_ids if include_subscription_ids fails
-            if (!result.id) {
-                payload.include_player_ids = [pushToken];
-                delete payload.include_subscription_ids;
+                    let response = await fetch('https://api.onesignal.com/notifications', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Key ${ONESIGNAL_API_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify(subPayload)
+                    });
 
-                response = await fetch('https://api.onesignal.com/notifications', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Key ${ONESIGNAL_API_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
-                });
-                result = await response.json();
+                    let result = await response.json();
+
+                    // Fallback to include_player_ids if subscription_ids failed
+                    if (!result.id) {
+                        subPayload.include_player_ids = subIds;
+                        delete subPayload.include_subscription_ids;
+
+                        response = await fetch('https://api.onesignal.com/notifications', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Key ${ONESIGNAL_API_KEY}`,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json'
+                            },
+                            body: JSON.stringify(subPayload)
+                        });
+                        result = await response.json();
+                    }
+
+                    if (result.id) {
+                        console.log(`✅ Push sent to subscriptions [${subIds.join(', ')}]:`, result.id);
+                        sentSuccess = true;
+                        lastResult = result;
+                    } else if (!sentSuccess) {
+                        console.log('❌ Subscription push notice:', result.errors || result);
+                    }
+                } catch (subErr) {
+                    console.warn('⚠️ Subscription push error:', subErr.message);
+                }
             }
 
-            if (result.id) {
-                console.log('✅ Push sent via OneSignal:', result.id);
-                return { success: true, result: result };
+            if (sentSuccess) {
+                return { success: true, result: lastResult };
             } else {
-                console.log('❌ Push error:', result.errors || result);
-                return { success: false, error: result.errors || result };
+                return { success: false, error: 'No active device or subscription reached' };
             }
         } catch (error) {
             console.error('❌ Push error:', error.message);
@@ -87,9 +141,11 @@ class PushService {
     //  
     // SEND ANNOUNCEMENT PUSH
     //  
-    async sendAnnouncementPush({ pushToken, title, message, announcementId }) {
+    async sendAnnouncementPush({ userId, pushToken, webPushToken, title, message, announcementId }) {
         return this.sendPushNotification({
+            userId,
             pushToken,
+            webPushToken,
             title: `📢 ${title}`,
             message: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
             data: {
@@ -126,9 +182,11 @@ class PushService {
     //  
     // SEND ATTENDANCE PUSH
     //  
-    async sendAttendancePush({ pushToken, studentName, status, class_name }) {
+    async sendAttendancePush({ userId, pushToken, webPushToken, studentName, status, class_name }) {
         return this.sendPushNotification({
+            userId,
             pushToken,
+            webPushToken,
             title: `📋 Attendance Marked`,
             message: `${studentName} marked as ${status} in ${class_name || 'class'}`,
             data: {
@@ -143,9 +201,11 @@ class PushService {
     //  
     // SEND GRADE PUSH
     //  
-    async sendGradePush({ pushToken, studentName, subject, grade }) {
+    async sendGradePush({ userId, pushToken, webPushToken, studentName, subject, grade }) {
         return this.sendPushNotification({
+            userId,
             pushToken,
+            webPushToken,
             title: `📊 Grade Added`,
             message: `${studentName} - ${subject}: ${grade}`,
             data: {
@@ -160,9 +220,11 @@ class PushService {
     //  
     // SEND APPROVAL PUSH
     //  
-    async sendApprovalPush({ pushToken, name, status }) {
+    async sendApprovalPush({ userId, pushToken, webPushToken, name, status }) {
         return this.sendPushNotification({
+            userId,
             pushToken,
+            webPushToken,
             title: `✅ Account ${status}`,
             message: `${name}'s account has been ${status.toLowerCase()}`,
             data: {
@@ -176,9 +238,11 @@ class PushService {
     //  
     // SEND RESPONSE PUSH
     //  
-    async sendResponsePush({ pushToken, senderName, subject }) {
+    async sendResponsePush({ userId, pushToken, webPushToken, senderName, subject }) {
         return this.sendPushNotification({
+            userId,
             pushToken,
+            webPushToken,
             title: `💬 New Response`,
             message: `${senderName} replied to: ${subject}`,
             data: {

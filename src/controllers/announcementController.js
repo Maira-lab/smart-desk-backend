@@ -85,7 +85,7 @@ class AnnouncementController {
                 
                 if (parsedRecipientIds.length > 0) {
                     const placeholders = parsedRecipientIds.map(() => '?').join(',');
-                    const userQuery = `SELECT user_id, email, full_name, user_role, push_token FROM users WHERE user_id IN (${placeholders}) AND status = 'Active'`;
+                    const userQuery = `SELECT user_id, email, full_name, user_role, push_token, web_push_token FROM users WHERE user_id IN (${placeholders}) AND status = 'Active'`;
                     recipients = await db.query(userQuery, parsedRecipientIds);
                 }
             } else {
@@ -97,7 +97,7 @@ class AnnouncementController {
                 } else {
                     roleCondition = "AND user_role IN ('Teacher', 'Coordinator')";
                 }
-                const userQuery = `SELECT user_id, email, full_name, user_role, push_token FROM users WHERE status = 'Active' AND user_id != ? ${roleCondition}`;
+                const userQuery = `SELECT user_id, email, full_name, user_role, push_token, web_push_token FROM users WHERE status = 'Active' AND user_id != ? ${roleCondition}`;
                 recipients = await db.query(userQuery, [senderId]);
             }
 
@@ -192,14 +192,16 @@ class AnnouncementController {
                 }
             }
 
-            // 4. Send PUSH notifications
+            // 4. Send PUSH notifications (Mobile + Web)
             let pushSent = 0;
             let pushFailed = 0;
             for (const recipient of recipients) {
-                if (recipient.push_token) {
+                if (recipient.user_id || recipient.push_token || recipient.web_push_token) {
                     try {
                         const result = await pushService.sendAnnouncementPush({
+                            userId: recipient.user_id,
                             pushToken: recipient.push_token,
+                            webPushToken: recipient.web_push_token,
                             title: subject,
                             message: message,
                             announcementId: annResult.insertId

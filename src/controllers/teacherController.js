@@ -422,24 +422,26 @@ class TeacherController {
                     console.error('⚠️ Attendance notification error:', notifErr.message);
                 }
 
-                //   PUSH NOTIFICATION TO STUDENT (email ke saath)
+                //   PUSH NOTIFICATION TO STUDENT (email ke saath - Mobile + Web)
                 try {
-                    const stToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [student_id]);
-                    if (stToken.length > 0 && stToken[0].push_token) {
+                    const stToken = await db.query('SELECT push_token, web_push_token, full_name FROM users WHERE user_id = ?', [student_id]);
+                    if (stToken.length > 0) {
                         const pushEmoji = status === 'present' ? '✅' : status === 'absent' ? '❌' : '⏰';
                         const pushResult = await pushService.sendAnnouncementPush({
+                            userId: student_id,
                             pushToken: stToken[0].push_token,
+                            webPushToken: stToken[0].web_push_token,
                             title: `${pushEmoji} Attendance Marked: ${subjectName}`,
                             message: `Your attendance for ${subjectName} on ${attendance_date} has been marked as ${status.toUpperCase()} by ${teacherName}.`,
                             announcementId: null
                         });
                         if (pushResult && pushResult.success) {
-                            console.log(`📱✅ Attendance push sent to ${stToken[0].full_name}`);
+                            console.log(`📱💻✅ Attendance push sent to ${stToken[0].full_name}`);
                         } else {
-                            console.log(`📱❌ Push failed for ${student_id}:`, pushResult && pushResult.error);
+                            console.log(`📱💻❌ Push failed for ${student_id}:`, pushResult && pushResult.error);
                         }
                     } else {
-                        console.log(`📱⚠️ No push token for student ${student_id}`);
+                        console.log(`📱⚠️ No user record for student ${student_id}`);
                     }
                 } catch (pushErr) {
                     console.error('⚠️ Attendance push error:', pushErr.message);
@@ -971,15 +973,17 @@ try {
                     console.error('⚠️ Reply email error:', emailErr.message);
                 }
 
-                //   PUSH NOTIFICATION TO ADMIN
+                //   PUSH NOTIFICATION TO ADMIN (Mobile + Web)
                 try {
-                    const adminToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [targetId]);
-                    if (adminToken.length > 0 && adminToken[0].push_token) {
+                    const adminToken = await db.query('SELECT push_token, web_push_token, full_name FROM users WHERE user_id = ?', [targetId]);
+                    if (adminToken.length > 0) {
                         const teacherNameResult = await db.query('SELECT full_name FROM users WHERE user_id = ?', [teacherId]);
                         const teacherName = teacherNameResult[0]?.full_name || 'Teacher';
                         
                         const pushResult = await pushService.sendAnnouncementPush({
+                            userId: targetId,
                             pushToken: adminToken[0].push_token,
+                            webPushToken: adminToken[0].web_push_token,
                             title: `Reply from ${teacherName}`,
                             message: (message || '📎 Attachment sent').substring(0, 100) + (savedFileUrl ? ' 📎' : ''),
                             announcementId: replyNotifId
@@ -988,10 +992,10 @@ try {
                             if (replyNotifId) {
                                 await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [replyNotifId]);
                             }
-                            console.log(`📱 Reply push sent to admin: ${adminToken[0].full_name}`);
+                            console.log(`📱💻✅ Reply push sent to admin: ${adminToken[0].full_name}`);
                         }
                     } else {
-                        console.log(`📱⚠️ No push token for admin ${targetId}`);
+                        console.log(`📱⚠️ No user record for admin ${targetId}`);
                     }
                 } catch (pushErr) {
                     console.error('⚠️ Reply push error:', pushErr.message);
@@ -1103,24 +1107,25 @@ try {
             } catch (emailErr) {
                 console.error('⚠️ Teacher notification email error:', emailErr.message);
             }
-                        // 📱 PUSH NOTIFICATION (OneSignal) - ✅ NEW
+                        // 📱 PUSH NOTIFICATION (OneSignal - Mobile + Web) - ✅ UPDATED
             try {
                 const pushService = require('../services/pushService');
-                const tokenResult = await db.query('SELECT push_token FROM users WHERE user_id = ?', [recipientId]);
+                const tokenResult = await db.query('SELECT push_token, web_push_token FROM users WHERE user_id = ?', [recipientId]);
                 const pushToken = tokenResult[0]?.push_token;
-                if (pushToken) {
+                const webPushToken = tokenResult[0]?.web_push_token;
+                if (recipientId || pushToken || webPushToken) {
                     const pushResult = await pushService.sendPushNotification({
+                        userId: recipientId,
                         pushToken,
+                        webPushToken,
                         title: `📢 ${subject.trim()}`,
                         message: message.trim().substring(0, 100),
                         data: { type: 'announcement', sender: 'Teacher', notificationId: result.insertId }
                     });
                     if (pushResult.success) {
                         await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [result.insertId]);
-                        console.log('✅ Teacher push sent to:', recipient.full_name);
+                        console.log('📱💻✅ Teacher push sent to:', recipient.full_name);
                     }
-                } else {
-                    console.log('⚠️ Recipient ka push token nahi hai');
                 }
             } catch (pushErr) {
                 console.error('⚠️ Teacher push error:', pushErr.message);
@@ -1185,14 +1190,17 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                     } catch (emailErr) {
                         console.error('⚠️ Bulk email error:', emailErr.message);
                     }
-                                        // 📱 PUSH (OneSignal)
+                                        // 📱 PUSH (OneSignal - Mobile + Web)
                     try {
                         const pushService = require('../services/pushService');
-                        const tRes = await db.query('SELECT push_token FROM users WHERE user_id = ?', [student.user_id]);
+                        const tRes = await db.query('SELECT push_token, web_push_token FROM users WHERE user_id = ?', [student.user_id]);
                         const pToken = tRes[0]?.push_token;
-                        if (pToken) {
+                        const wToken = tRes[0]?.web_push_token;
+                        if (student.user_id || pToken || wToken) {
                             await pushService.sendPushNotification({
+                                userId: student.user_id,
                                 pushToken: pToken,
+                                webPushToken: wToken,
                                 title: `📢 ${subject.trim()}`,
                                 message: message.trim().substring(0, 100),
                                 data: { type: 'announcement', sender: 'Teacher' }
@@ -1376,7 +1384,7 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         //   NEW: Jab access grant ho → student ko notification + push + email
             if (accessGranted === true || accessGranted === 'true' || accessGranted === 1) {
                 try {
-                    const stInfo = await db.query('SELECT full_name, email, push_token FROM users WHERE user_id = ?', [studentId]);
+                    const stInfo = await db.query('SELECT full_name, email, push_token, web_push_token FROM users WHERE user_id = ?', [studentId]);
                     const stName = stInfo[0]?.full_name || 'Student';
                     const classRow = await db.query('SELECT subject_name FROM classrooms WHERE classroom_id = ?', [classId]);
                     const subj = classRow[0]?.subject_name || 'Class';
@@ -1393,17 +1401,19 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                         `Dear ${stName},\n\nYour academic report for ${subj} (${period}) is now available. Open Academic Reports to view it.\n\nSent via Smart Desk`
                     ]);
 
-                    //   PUSH
-                    if (stInfo[0]?.push_token) {
+                    //   PUSH (Mobile + Web)
+                    if (studentId || stInfo[0]?.push_token || stInfo[0]?.web_push_token) {
                         const pushResult = await pushService.sendAnnouncementPush({
-                            pushToken: stInfo[0].push_token,
+                            userId: studentId,
+                            pushToken: stInfo[0]?.push_token,
+                            webPushToken: stInfo[0]?.web_push_token,
                             title: `📊 Academic Report Available: ${subj}`,
                             message: `Your academic report for ${subj} (${period}) is now available.`,
                             announcementId: notifResult.insertId
                         });
                         if (pushResult && pushResult.success) {
                             await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [notifResult.insertId]);
-                            console.log(`📱✅ Report access push sent to ${stName}`);
+                            console.log(`📱💻✅ Report access push sent to ${stName}`);
                         }
                     } else {
                         console.log(`📱⚠️ No push token for student ${studentId}`);

@@ -689,18 +689,23 @@ class AuthController {
         }
     }
 
-    // Push Token Save Karein
+    // Push Token Save Karein (Web + Mobile)
     async updatePushToken(req, res) {
         try {
             const userId = req.user?.user_id;
-            const { pushToken } = req.body;
+            const { pushToken, platform } = req.body;
 
             if (!userId || !pushToken) {
                 return res.status(400).json({ success: false, error: 'Missing pushToken' });
             }
 
-            await this.query('UPDATE users SET push_token = ? WHERE user_id = ?', [pushToken, userId]);
-            console.log(`✅ Push token saved for user ${userId}`);
+            if (platform === 'web') {
+                await this.query('UPDATE users SET web_push_token = ? WHERE user_id = ?', [pushToken, userId]);
+                console.log(`✅ Web push token saved for user ${userId}: ${pushToken}`);
+            } else {
+                await this.query('UPDATE users SET push_token = ? WHERE user_id = ?', [pushToken, userId]);
+                console.log(`✅ Mobile push token saved for user ${userId}: ${pushToken}`);
+            }
 
             res.json({ success: true, message: 'Push token saved successfully' });
         } catch (error) {

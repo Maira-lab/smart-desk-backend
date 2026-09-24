@@ -1510,24 +1510,26 @@ Please open Department Reports / Pending Requests to generate and submit this re
             console.error('⚠️ Report request notification error:', notifErr.message);
         }
 
-        //   PUSH NOTIFICATION TO COORDINATOR
+        //   PUSH NOTIFICATION TO COORDINATOR (Mobile + Web)
         try {
-            const coordToken = await db.query('SELECT push_token, full_name FROM users WHERE user_id = ?', [coordinatorUserId]);
-            if (coordToken.length > 0 && coordToken[0].push_token) {
+            const coordToken = await db.query('SELECT push_token, web_push_token, full_name FROM users WHERE user_id = ?', [coordinatorUserId]);
+            if (coordToken.length > 0) {
                 const pushResult = await pushService.sendAnnouncementPush({
+                    userId: coordinatorUserId,
                     pushToken: coordToken[0].push_token,
+                    webPushToken: coordToken[0].web_push_token,
                     title: '📊 New Report Request from Admin',
                     message: `Admin ${adminName} has requested a ${finalReportType} report. Deadline: ${deadline || 'N/A'}`,
                     announcementId: notificationId
                 });
                 if (pushResult && pushResult.success) {
                     await db.query('UPDATE notifications SET is_pushed = TRUE WHERE notification_id = ?', [notificationId]);
-                    console.log(`📱✅ Report request push sent to ${coordToken[0].full_name}`);
+                    console.log(`📱💻✅ Report request push sent to ${coordToken[0].full_name}`);
                 } else {
-                    console.log(`📱❌ Push failed for coordinator ${coordinatorUserId}`);
+                    console.log(`📱💻❌ Push failed for coordinator ${coordinatorUserId}`);
                 }
             } else {
-                console.log(`📱⚠️ No push token for coordinator ${coordinatorUserId}`);
+                console.log(`📱⚠️ No user record for coordinator ${coordinatorUserId}`);
             }
         } catch (pushErr) {
             console.error('⚠️ Report request push error:', pushErr.message);
