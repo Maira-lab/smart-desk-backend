@@ -41,7 +41,7 @@ async function query(sql, params = []) {
     return rows;
 }
 
-//  Domain Validation Helper
+// Domain Validation Helper
 function validateEmailDomain(email) {
     if (!email || !email.includes('@')) return { valid: false, type: null, error: 'Invalid email format' };
     const domain = email.split('@')[1].toLowerCase();
@@ -56,6 +56,118 @@ function validateEmailDomain(email) {
         return { valid: true, type: 'public', message: '⚠️ Public Email (Admin will manually review)' };
     }
     return { valid: false, type: null, error: '❌ Domain not allowed. Use institute email or gmail/yahoo/outlook.' };
+}
+
+// Professional Anti-Spam OTP Email Builder (Multipart Text + Semantic HTML + Delivery Headers)
+function buildOTPEmailPayload({ to, otp, purpose, recipientName, expiryMinutes = 5 }) {
+    const isTestingMode = process.env.EMAIL_TESTING_MODE === 'true' || process.env.EMAIL_TESTING_MODE === '1';
+    const recipientEmail = isTestingMode ? process.env.SMTP_USER : to;
+    const nameGreeting = recipientName ? ` ${recipientName}` : '';
+
+    const subject = `${otp} is your Smart Desk verification code`;
+
+    const text = `Smart Desk Academic Management Portal\n`
+        + `=======================================\n\n`
+        + `Hello${nameGreeting},\n\n`
+        + `Your verification code for ${purpose} is:\n\n`
+        + `    ${otp}\n\n`
+        + `This code will expire in ${expiryMinutes} minutes.\n\n`
+        + `For security reasons, please do not share this code with anyone.\n`
+        + `If you did not request this verification code, please ignore this email.\n\n`
+        + `Best regards,\n`
+        + `Smart Desk Academic Administration\n`
+        + `Portal: https://smartdeskpk.work`;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>${otp} - Smart Desk Verification Code</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e293b;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f5f9;padding:40px 16px;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:540px;background-color:#ffffff;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+                    <!-- Brand Banner -->
+                    <tr>
+                        <td style="background-color:#0f172a;padding:26px 32px;border-bottom:3px solid #4f46e5;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td>
+                                        <div style="font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.3px;">Smart Desk</div>
+                                        <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Academic Management Portal</div>
+                                    </td>
+                                    <td align="right">
+                                        <span style="font-size:11px;font-weight:600;color:#a5b4fc;background-color:#1e1b4b;padding:4px 10px;border-radius:20px;border:1px solid #3730a3;">Security Verification</span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Body Content -->
+                    <tr>
+                        <td style="padding:32px 32px 24px 32px;">
+                            <div style="font-size:16px;font-weight:600;color:#0f172a;margin-bottom:12px;">Hello${nameGreeting},</div>
+                            <p style="font-size:14px;line-height:22px;color:#475569;margin:0 0 20px 0;">
+                                A request was made to verify your email address (<strong>${to}</strong>) for <strong>${purpose}</strong>. Please enter the verification code below to complete the verification:
+                            </p>
+
+                            <!-- Modern Verification Code Box -->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
+                                <tr>
+                                    <td align="center" style="background-color:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;padding:24px 16px;">
+                                        <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Single-Use Security Code</div>
+                                        <div style="font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:800;letter-spacing:12px;color:#1e40af;margin:0;padding-left:12px;">${otp}</div>
+                                        <div style="font-size:12px;font-weight:500;color:#dc2626;margin-top:10px;">Valid for ${expiryMinutes} minutes</div>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <p style="font-size:13px;line-height:20px;color:#64748b;margin:0 0 16px 0;">
+                                <strong>Security Notice:</strong> Smart Desk administration and faculty will never request your verification code or password. If you did not initiate this request, you can safely disregard this email.
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color:#f8fafc;padding:20px 32px;border-top:1px solid #e2e8f0;text-align:center;">
+                            <div style="font-size:12px;color:#64748b;margin-bottom:4px;">
+                                Smart Desk Academic Portal • <a href="https://smartdeskpk.work" style="color:#4f46e5;text-decoration:none;font-weight:500;">smartdeskpk.work</a>
+                            </div>
+                            <div style="font-size:11px;color:#94a3b8;">
+                                Automated transactional notification. Please do not reply directly to this address.
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>`;
+
+    return {
+        from: process.env.SMTP_FROM || `"Smart Desk" <${process.env.SMTP_USER}>`,
+        replyTo: `"Smart Desk Support" <${process.env.SMTP_USER}>`,
+        to: recipientEmail,
+        subject,
+        text,
+        html,
+        headers: {
+            'X-Priority': '1',
+            'X-MSMail-Priority': 'High',
+            'Importance': 'High',
+            'X-Mailer': 'SmartDesk Academic Portal Verification System',
+            'Auto-Submitted': 'auto-generated',
+            'X-Auto-Response-Suppress': 'All',
+            'Precedence': 'bulk'
+        }
+    };
 }
 
 //  
@@ -76,37 +188,21 @@ const sendOTP = async (req, res) => {
             otp, expiresAt: Date.now() + 5 * 60 * 1000, verified: false
         });
 
-        //   .env se testing mode check karein
-            const isTestingMode = process.env.EMAIL_TESTING_MODE === 'true' || process.env.EMAIL_TESTING_MODE === '1';
-            const recipientEmail = isTestingMode ? process.env.SMTP_USER : email;
-
-            await transporter.sendMail({
-                from: process.env.SMTP_FROM || `"Smart Desk" <${process.env.SMTP_USER}>`,
-                to: recipientEmail,
-            subject: `🔐 OTP Code for ${user.full_name || 'User'}`,
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #F59E0B, #D97706); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-                        <h1 style="color: white; margin: 0;">Smart Desk</h1>
-                        <p style="color: #FEF3C7; margin: 5px 0 0 0;">OTP Verification</p>
-                    </div>
-                    <div style="background: #F9FAFB; padding: 30px; border-radius: 0 0 10px 10px;">
-                        <p>Hello <strong>${user.full_name || 'User'}</strong>,</p>
-                        <p>Your OTP code is:</p>
-                        <div style="background: white; padding: 25px; text-align: center; margin: 25px 0; border-radius: 10px; border: 2px dashed #F59E0B;">
-                            <h1 style="color: #B45309; letter-spacing: 10px; margin: 0; font-size: 36px;">${otp}</h1>
-                        </div>
-                        <p style="color: #EF4444; font-weight: bold;">⏰ Expires in 5 minutes.</p>
-                    </div>
-                </div>
-            `
+        const mailPayload = buildOTPEmailPayload({
+            to: email,
+            otp,
+            purpose: 'Password Reset',
+            recipientName: user.full_name || 'User',
+            expiryMinutes: 5
         });
 
-        console.log(`📧 Forgot Password OTP for ${email}: ${otp} (sent to ${recipientEmail})`);
+        await transporter.sendMail(mailPayload);
+
+        console.log(`📧 Forgot Password OTP for ${email}: ${otp} (sent to ${mailPayload.to})`);
 
         res.json({
             success: true,
-            message: `OTP sent to ${recipientEmail}`,
+            message: `OTP sent to ${mailPayload.to}`,
             debugOTP: otp,
             email: email
         });
@@ -177,19 +273,18 @@ const resendOTP = async (req, res) => {
         
         otpStore.set(`forgot_${email}`, { otp, expiresAt: Date.now() + 5 * 60 * 1000, verified: false });
 
-//   .env se testing mode check karein
-        const isTestingMode = process.env.EMAIL_TESTING_MODE === 'true' || process.env.EMAIL_TESTING_MODE === '1';
-        const recipientEmail = isTestingMode ? process.env.SMTP_USER : email;
-
-        await transporter.sendMail({
-            from: process.env.SMTP_FROM || `"Smart Desk" <${process.env.SMTP_USER}>`,
-            to: recipientEmail,
-            subject: `🔐 New OTP Code`,
-            html: `<div style="font-family: Arial; padding: 20px;"><h1>New OTP: ${otp}</h1><p>Expires in 5 minutes.</p></div>`
+        const mailPayload = buildOTPEmailPayload({
+            to: email,
+            otp,
+            purpose: 'Password Reset',
+            recipientName: user.full_name || 'User',
+            expiryMinutes: 5
         });
 
-        console.log(`📧 Resend OTP for ${email}: ${otp}`);
-        res.json({ success: true, message: `New OTP sent`, debugOTP: otp });
+        await transporter.sendMail(mailPayload);
+
+        console.log(`📧 Resend OTP for ${email}: ${otp} (sent to ${mailPayload.to})`);
+        res.json({ success: true, message: `New OTP sent to ${mailPayload.to}`, debugOTP: otp });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Server error: ' + error.message });
     }
@@ -221,32 +316,15 @@ const sendRegistrationOTP = async (req, res) => {
             otp, expiresAt: Date.now() + 5 * 60 * 1000, verified: false, domainType: domainCheck.type
         });
 
-        //   .env se testing mode check karein
-        const isTestingMode = process.env.EMAIL_TESTING_MODE === 'true' || process.env.EMAIL_TESTING_MODE === '1';
-        const recipientEmail = isTestingMode ? process.env.SMTP_USER : email;
-
-        await transporter.sendMail({
-            from: process.env.SMTP_FROM || `"Smart Desk" <${process.env.SMTP_USER}>`,
-            to: recipientEmail,
-            subject: '🎓 Smart Desk - Registration Verification',
-            html: `
-                <div style="font-family: Arial; max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #7C3AED, #6D28D9); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-                        <h1 style="color: white; margin: 0;">📖 Smart Desk</h1>
-                        <p style="color: #DDD6FE; margin: 5px 0 0 0;">Registration Verification</p>
-                    </div>
-                    <div style="background: #F9FAFB; padding: 30px; border-radius: 0 0 10px 10px;">
-                        <p style="color: #1F2937;">Hello,</p>
-                        <p style="color: #4B5563;">You're registering with: <strong>${email}</strong></p>
-                        <p style="color: #4B5563;"><strong>${domainCheck.message}</strong></p>
-                        <div style="background: white; padding: 25px; text-align: center; margin: 25px 0; border-radius: 10px; border: 2px dashed #7C3AED;">
-                            <h1 style="color: #7C3AED; letter-spacing: 10px; margin: 0; font-size: 36px;">${otp}</h1>
-                        </div>
-                        <p style="color: #EF4444; font-weight: bold;">⏰ This OTP expires in 5 minutes.</p>
-                    </div>
-                </div>
-            `
+        const mailPayload = buildOTPEmailPayload({
+            to: email,
+            otp,
+            purpose: 'New Account Registration',
+            recipientName: '',
+            expiryMinutes: 5
         });
+
+        await transporter.sendMail(mailPayload);
 
         console.log('\n' + '='.repeat(60));
         console.log('🎓 REGISTRATION OTP SENT');
@@ -254,7 +332,7 @@ const sendRegistrationOTP = async (req, res) => {
         console.log(`📧 Email:        ${email}`);
         console.log(`🌐 Domain Type:  ${domainCheck.type} (${domainCheck.message})`);
         console.log(`🔑 OTP:          ${otp}`);
-        console.log(`📨 Sent To:      ${recipientEmail} ${isTestingMode ? '(TESTING MODE)' : '(PRODUCTION MODE)'}`);
+        console.log(`📨 Sent To:      ${mailPayload.to}`);
         console.log('='.repeat(60) + '\n');
 
         res.json({
