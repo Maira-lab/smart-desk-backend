@@ -2514,29 +2514,74 @@ async getEnrolledStudents(req, res) {
                 [cleanRemarks, report_id]
             );
 
-            // Notify assigned teacher
+            // Notify assigned teachers (In-App + OneSignal Push)
             try {
                 const rep = await db.query(
-                    `SELECT pr.classroom_id, c.class_name, ct.teacher_id, t.user_id AS teacher_user_id
+                    `SELECT pr.classroom_id, c.class_name, c.teacher_name, c.institute_id
                      FROM performance_reports pr
                      JOIN classrooms c ON pr.classroom_id = c.classroom_id
-                     LEFT JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id
-                     LEFT JOIN teachers t ON ct.teacher_id = t.teacher_id OR ct.teacher_id = t.user_id
                      WHERE pr.report_id = ? LIMIT 1`,
                     [report_id]
                 );
-                const teacherUserId = rep[0]?.teacher_user_id || rep[0]?.teacher_id;
-                if (teacherUserId) {
-                    await db.query(
-                        `INSERT INTO notifications (sender_id, sender_role, receiver_id, receiver_role, notification_type, title, message)
-                         VALUES (?, 'Coordinator', ?, 'Teacher', 'Announcement', ?, ?)`,
-                        [
-                            coordinatorId,
-                            teacherUserId,
-                            'Coordinator Remarks on Class Performance',
-                            `Coordinator has reviewed the performance report for ${rep[0]?.class_name || 'your class'} and added remarks:\n"${cleanRemarks}"`
-                        ]
+
+                if (rep.length > 0) {
+                    const classId = rep[0].classroom_id;
+                    const className = rep[0].class_name || 'Class';
+                    const teacherName = rep[0].teacher_name || '';
+
+                    const teachers = await db.query(
+                        `SELECT DISTINCT u.user_id, u.full_name, u.push_token, u.web_push_token
+                         FROM users u
+                         WHERE u.user_role = 'Teacher'
+                         AND (
+                             u.user_id IN (
+                                 SELECT t.user_id FROM teachers t
+                                 JOIN classroom_teachers ct ON ct.teacher_id = t.teacher_id
+                                 WHERE ct.classroom_id = ?
+                             )
+                             OR u.user_id IN (
+                                 SELECT ct.teacher_id FROM classroom_teachers ct
+                                 WHERE ct.classroom_id = ?
+                             )
+                             OR (LENGTH(?) > 0 AND LOWER(TRIM(u.full_name)) = LOWER(TRIM(?)))
+                         )`,
+                        [classId, classId, teacherName, teacherName]
                     );
+
+                    let targetTeachers = teachers;
+                    if (targetTeachers.length === 0) {
+                        targetTeachers = await db.query(
+                            `SELECT user_id, full_name, push_token, web_push_token FROM users WHERE user_role = 'Teacher' AND status = 'Active' LIMIT 5`
+                        );
+                    }
+
+                    const notifTitle = 'Coordinator Remarks on Class Performance';
+                    const notifMsg = `Coordinator has reviewed the performance report for ${className} and added remarks:\n"${cleanRemarks || 'Performance reviewed.'}"`;
+
+                    for (const teacher of targetTeachers) {
+                        try {
+                            await db.query(
+                                `INSERT INTO notifications (sender_id, sender_role, receiver_id, receiver_role, notification_type, title, message, is_pushed, classroom_id)
+                                 VALUES (?, 'Coordinator', ?, 'Teacher', 'Announcement', ?, ?, 1, ?)`,
+                                [coordinatorId, teacher.user_id, notifTitle, notifMsg, classId]
+                            );
+                        } catch (dbErr) {
+                            console.error('Insert notification error for teacher', teacher.user_id, dbErr.message);
+                        }
+
+                        try {
+                            await pushService.sendAnnouncementPush({
+                                userId: teacher.user_id,
+                                pushToken: teacher.push_token,
+                                webPushToken: teacher.web_push_token,
+                                title: notifTitle,
+                                message: notifMsg
+                            });
+                            console.log(`✅ Push notification sent to teacher ${teacher.full_name} (${teacher.user_id}) for remarks`);
+                        } catch (pushErr) {
+                            console.error('Push error to teacher', teacher.user_id, pushErr.message);
+                        }
+                    }
                 }
             } catch (notifErr) {
                 console.error('Teacher notification error on remarks:', notifErr.message);
