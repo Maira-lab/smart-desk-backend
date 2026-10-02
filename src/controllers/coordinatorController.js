@@ -115,6 +115,7 @@ class CoordinatorController {
         this.promoteClass = this.promoteClass.bind(this);
         this.getPerformanceReports = this.getPerformanceReports.bind(this);
         this.getPerformanceReportDetails = this.getPerformanceReportDetails.bind(this);
+        this.saveCoordinatorRemarks = this.saveCoordinatorRemarks.bind(this);
         this.buildLiveStudents = this.buildLiveStudents.bind(this);
         this.downloadPerformanceReport = this.downloadPerformanceReport.bind(this);
         this.getReportRequests = this.getReportRequests.bind(this);
@@ -2448,6 +2449,7 @@ async getEnrolledStudents(req, res) {
                     pr.pass_rate AS passRate,
                     pr.top_performer AS topPerformer,
                     pr.teacher_remarks AS teacherRemarks,
+                    pr.coordinator_remarks AS coordinatorRemarks,
                     DATE_FORMAT(pr.created_at, '%b %d, %Y') AS createdDate,
                     pr.access_granted AS accessGranted,
                     pr.detailed_data AS detailedData
@@ -2463,7 +2465,11 @@ async getEnrolledStudents(req, res) {
             const report = results[0];
             let students = [];
             try { 
-                students = report.detailedData ? JSON.parse(report.detailedData) : []; 
+                if (Array.isArray(report.detailedData)) {
+                    students = report.detailedData;
+                } else if (typeof report.detailedData === 'string' && report.detailedData.trim()) {
+                    students = JSON.parse(report.detailedData);
+                }
             } catch (e) { 
                 students = []; 
             }
@@ -2482,6 +2488,59 @@ async getEnrolledStudents(req, res) {
         }
     }
 
+    //  SAVE COORDINATOR REMARKS FOR CLASS PERFORMANCE REPORT
+    async saveCoordinatorRemarks(req, res) {
+        try {
+            const { report_id } = req.params;
+            const { coordinatorRemarks } = req.body;
+            const coordinatorId = req.user?.user_id;
+
+            if (!report_id) {
+                return res.status(400).json({ success: false, error: 'Report ID is required' });
+            }
+
+            const cleanRemarks = coordinatorRemarks ? String(coordinatorRemarks).replace(/[^\x20-\x7E\u0600-\u06FF\s.,!?:;()\-]/g, '').trim() : '';
+
+            await db.query(
+                `UPDATE performance_reports SET coordinator_remarks = ?, updated_at = CURRENT_TIMESTAMP WHERE report_id = ?`,
+                [cleanRemarks, report_id]
+            );
+
+            // Notify assigned teacher
+            try {
+                const rep = await db.query(
+                    `SELECT pr.classroom_id, c.class_name, ct.teacher_id, t.user_id AS teacher_user_id
+                     FROM performance_reports pr
+                     JOIN classrooms c ON pr.classroom_id = c.classroom_id
+                     LEFT JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id
+                     LEFT JOIN teachers t ON ct.teacher_id = t.teacher_id OR ct.teacher_id = t.user_id
+                     WHERE pr.report_id = ? LIMIT 1`,
+                    [report_id]
+                );
+                const teacherUserId = rep[0]?.teacher_user_id || rep[0]?.teacher_id;
+                if (teacherUserId) {
+                    await db.query(
+                        `INSERT INTO notifications (sender_id, sender_role, receiver_id, receiver_role, notification_type, title, message)
+                         VALUES (?, 'Coordinator', ?, 'Teacher', 'Announcement', ?, ?)`,
+                        [
+                            coordinatorId,
+                            teacherUserId,
+                            'Coordinator Remarks on Class Performance',
+                            `Coordinator has reviewed the performance report for ${rep[0]?.class_name || 'your class'} and added remarks:\n"${cleanRemarks}"`
+                        ]
+                    );
+                }
+            } catch (notifErr) {
+                console.error('Teacher notification error on remarks:', notifErr.message);
+            }
+
+            res.json({ success: true, message: 'Coordinator remarks saved successfully!' });
+        } catch (error) {
+            console.error('Save coordinator remarks error:', error);
+            res.status(500).json({ success: false, error: 'Server error: ' + error.message });
+        }
+    }
+
     //  NEW: Live students + unki saved academic reports
     async buildLiveStudents(classId) {
         const students = await db.query(`
@@ -2489,8 +2548,9 @@ async getEnrolledStudents(req, res) {
                 COALESCE((SELECT ROUND(AVG(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100)
                     FROM attendance a WHERE a.student_id=u.user_id AND a.classroom_id=?),0) AS attendance
             FROM enrollments e
-            JOIN users u ON e.student_id=u.user_id
-            WHERE e.classroom_id=? AND e.status='Active'
+            JOIN users u ON (e.student_id = u.user_id OR e.student_id = (SELECT st.student_id FROM students st WHERE st.user_id = u.user_id LIMIT 1))
+            WHERE e.classroom_id=? AND LOWER(e.status)='active'
+            GROUP BY u.user_id, u.full_name, u.roll_no
             ORDER BY u.full_name ASC`, [classId, classId]);
 
         const formatted = [];
@@ -2750,14 +2810,118 @@ async getReportRequests(req, res) {
                 });
             }
 
+            const reqRecord = checkResult[0];
+            const target = reqRecord.specific_target || '';
+            const repType = reqRecord.report_type || type || 'department';
+
+            // 1. Bundle all class performance reports for this department or target
+            let bundledClasses = [];
+            try {
+                // Get coordinator department
+                const coordDept = await db.query(
+                    `SELECT department_name FROM coordinators WHERE user_id = ? OR coordinator_id = ?`,
+                    [coordinatorId, coordId]
+                );
+                const deptName = coordDept[0]?.department_name || '';
+
+                // Find matching classrooms
+                let classrooms = [];
+                if (repType === 'class' && target) {
+                    classrooms = await db.query(
+                        `SELECT c.classroom_id, c.class_name, c.subject_name, c.section, c.department_name, c.teacher_name,
+                                COALESCE(c.semester, sem.semester_code, '') AS semester
+                         FROM classrooms c
+                         LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
+                         WHERE (c.class_name LIKE ? OR c.classroom_id = ?) AND c.is_active = TRUE`,
+                        [`%${target}%`, isNaN(Number(target)) ? -1 : Number(target)]
+                    );
+                } else {
+                    classrooms = await db.query(
+                        `SELECT c.classroom_id, c.class_name, c.subject_name, c.section, c.department_name, c.teacher_name,
+                                COALESCE(c.semester, sem.semester_code, '') AS semester
+                         FROM classrooms c
+                         LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
+                         WHERE (c.department_name = ? OR c.department_name = ? OR ? = '' OR ? = 'department') AND c.is_active = TRUE
+                         ORDER BY c.class_name ASC`,
+                        [target, deptName, target, target]
+                    );
+                }
+
+                // If none found by strict match, fallback to all active classrooms
+                if (classrooms.length === 0) {
+                    classrooms = await db.query(
+                        `SELECT c.classroom_id, c.class_name, c.subject_name, c.section, c.department_name, c.teacher_name,
+                                COALESCE(c.semester, sem.semester_code, '') AS semester
+                         FROM classrooms c
+                         LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
+                         WHERE c.is_active = TRUE
+                         ORDER BY c.class_name ASC`
+                    );
+                }
+
+                for (const cls of classrooms) {
+                    const perfResult = await db.query(
+                        `SELECT report_id, average_grade, pass_rate, top_performer, teacher_remarks, coordinator_remarks, detailed_data
+                         FROM performance_reports WHERE classroom_id = ? ORDER BY created_at DESC LIMIT 1`,
+                        [cls.classroom_id]
+                    );
+
+                    let classStudents = [];
+                    let avgGrade = 'N/A';
+                    let passRate = 'N/A';
+                    let topPerformer = 'N/A';
+                    let teacherRemarks = '';
+                    let coordRemarks = coordinatorRemarks;
+
+                    if (perfResult.length > 0) {
+                        const p = perfResult[0];
+                        avgGrade = p.average_grade || 'N/A';
+                        passRate = p.pass_rate || 'N/A';
+                        topPerformer = p.top_performer || 'N/A';
+                        teacherRemarks = p.teacher_remarks || '';
+                        coordRemarks = p.coordinator_remarks || coordinatorRemarks;
+
+                        try {
+                            if (Array.isArray(p.detailed_data)) classStudents = p.detailed_data;
+                            else if (typeof p.detailed_data === 'string' && p.detailed_data.trim()) classStudents = JSON.parse(p.detailed_data);
+                        } catch (e) {
+                            classStudents = [];
+                        }
+                    }
+
+                    if (!classStudents || classStudents.length === 0) {
+                        classStudents = await this.buildLiveStudents(cls.classroom_id);
+                    }
+
+                    bundledClasses.push({
+                        classroomId: String(cls.classroom_id),
+                        className: cls.class_name || 'Class',
+                        subject: cls.subject_name || 'General',
+                        section: cls.section || '',
+                        semester: cls.semester || '',
+                        department: cls.department_name || deptName || '',
+                        teacherName: cls.teacher_name || 'Teacher',
+                        averageGrade: avgGrade,
+                        passRate: passRate,
+                        topPerformer: topPerformer,
+                        teacherRemarks: teacherRemarks,
+                        coordinatorRemarks: coordRemarks,
+                        students: classStudents
+                    });
+                }
+            } catch (bundleErr) {
+                console.error('⚠️ Error bundling class performance reports:', bundleErr.message);
+            }
+
             const updateQuery = `
                 UPDATE report_requests 
                 SET status = 'submitted', 
                     notes = ?,
+                    content_data = ?,
                     submitted_at = NOW()
                 WHERE request_id = ?
             `;
-            await db.query(updateQuery, [coordinatorRemarks, requestId]);
+            await db.query(updateQuery, [coordinatorRemarks, JSON.stringify(bundledClasses), requestId]);
 
             const logQuery = `
                 INSERT INTO audit_log (user_id, action_type, description, status, ip_address)

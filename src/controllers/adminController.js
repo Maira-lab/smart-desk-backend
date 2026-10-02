@@ -1645,22 +1645,76 @@ Please open Department Reports / Pending Requests to generate and submit this re
             const adminId = req.user?.user_id;
             const query = `
                 SELECT 
-                    rr.request_id AS id, u.full_name AS coordinatorName, u.email AS coordinatorEmail,
+                    rr.request_id AS id, u.full_name AS coordinatorName,
                     CONCAT(rr.report_type, ' Report - ', rr.specific_target) AS title,
                     rr.report_type AS type, rr.specific_target AS target,
                     DATE_FORMAT(rr.submitted_at, '%b %d, %Y') AS date, rr.status,
-                    rr.notes AS contentSummary, rr.file_path, 
+                    rr.notes AS contentSummary, rr.file_path, rr.content_data AS contentData,
                     DATE_FORMAT(rr.deadline, '%b %d, %Y') AS deadline,                    
                     DATE_FORMAT(rr.created_at, '%b %d, %Y') AS requested_date
-                    FROM report_requests rr
-                    JOIN users u ON rr.coordinator_id = u.user_id
-                    WHERE rr.request_id = ? AND rr.admin_id = ?
+                FROM report_requests rr
+                JOIN users u ON rr.coordinator_id = u.user_id
+                WHERE rr.request_id = ? AND rr.admin_id = ?
             `;
             const results = await db.query(query, [report_id, adminId]);
             if (results.length === 0) {
                 return res.status(404).json({ success: false, error: 'Report not found' });
             }
-            res.json({ success: true, report: results[0] });
+            const report = results[0];
+
+            let bundledClasses = [];
+            try {
+                if (Array.isArray(report.contentData)) {
+                    bundledClasses = report.contentData;
+                } else if (typeof report.contentData === 'string' && report.contentData.trim()) {
+                    bundledClasses = JSON.parse(report.contentData);
+                }
+            } catch (e) {
+                bundledClasses = [];
+            }
+
+            // Fallback: If bundledClasses is empty, fetch classes dynamically
+            if (!bundledClasses || bundledClasses.length === 0) {
+                try {
+                    const target = report.target || '';
+                    const classes = await db.query(
+                        `SELECT c.classroom_id, c.class_name, c.subject_name, c.section, c.department_name, c.teacher_name,
+                                COALESCE(c.semester, sem.semester_code, '') AS semester,
+                                pr.average_grade, pr.pass_rate, pr.top_performer, pr.teacher_remarks, pr.coordinator_remarks, pr.detailed_data
+                         FROM classrooms c
+                         LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
+                         LEFT JOIN performance_reports pr ON c.classroom_id = pr.classroom_id
+                         WHERE (c.department_name = ? OR c.class_name LIKE ? OR ? = '' OR ? = 'department') AND c.is_active = TRUE`,
+                        [target, `%${target}%`, target, target]
+                    );
+                    for (const cls of classes) {
+                        let st = [];
+                        try {
+                            if (Array.isArray(cls.detailed_data)) st = cls.detailed_data;
+                            else if (typeof cls.detailed_data === 'string' && cls.detailed_data.trim()) st = JSON.parse(cls.detailed_data);
+                        } catch (e) { st = []; }
+
+                        bundledClasses.push({
+                            classroomId: String(cls.classroom_id),
+                            className: cls.class_name || 'Class',
+                            subject: cls.subject_name || 'General',
+                            section: cls.section || '',
+                            semester: cls.semester || '',
+                            teacherName: cls.teacher_name || 'Teacher',
+                            averageGrade: cls.average_grade || 'N/A',
+                            passRate: cls.pass_rate || 'N/A',
+                            topPerformer: cls.top_performer || 'N/A',
+                            teacherRemarks: cls.teacher_remarks || '',
+                            coordinatorRemarks: cls.coordinator_remarks || report.contentSummary || '',
+                            students: st
+                        });
+                    }
+                } catch (fallbackErr) {
+                    console.error('Fallback query error:', fallbackErr.message);
+                }
+            }
+
+            res.json({ success: true, report: { ...report, bundledClasses } });
         } catch (error) {
             console.error('Get report details error:', error);
             res.status(500).json({ success: false, error: 'Server error: ' + error.message });
@@ -1675,10 +1729,11 @@ Please open Department Reports / Pending Requests to generate and submit this re
 
             const query = `
                 SELECT 
-                    rr.request_id AS id, u.full_name AS coordinatorName, u.email AS coordinatorEmail,
+                    rr.request_id AS id, u.full_name AS coordinatorName,
                     CONCAT(rr.report_type, ' Report - ', rr.specific_target) AS title,
                     rr.report_type AS type, rr.specific_target AS target,
                     DATE_FORMAT(rr.submitted_at, '%b %d, %Y') AS date, rr.notes AS contentSummary,
+                    rr.content_data AS contentData,
                     rr.file_path, DATE_FORMAT(rr.deadline, '%b %d, %Y') AS deadline, DATE_FORMAT(rr.created_at, '%b %d, %Y') AS requested_date
                 FROM report_requests rr
                 JOIN users u ON rr.coordinator_id = u.user_id
@@ -1692,43 +1747,140 @@ Please open Department Reports / Pending Requests to generate and submit this re
             const reportData = {
                 title: report.title || 'Department Report',
                 coordinatorName: report.coordinatorName || 'N/A',
-                coordinatorEmail: report.coordinatorEmail || 'N/A',
                 target: report.target || 'N/A',
                 date: report.date || new Date().toISOString(),
-                contentSummary: report.contentSummary || 'No content available',
+                contentSummary: report.contentSummary || 'No remarks available',
                 deadline: report.deadline || 'Not specified',
                 requestedDate: report.requested_date || 'N/A',
                 type: report.type || 'General'
             };
 
+            let bundledClasses = [];
+            try {
+                if (Array.isArray(report.contentData)) {
+                    bundledClasses = report.contentData;
+                } else if (typeof report.contentData === 'string' && report.contentData.trim()) {
+                    bundledClasses = JSON.parse(report.contentData);
+                }
+            } catch (e) {
+                bundledClasses = [];
+            }
+
             if (format === 'pdf') {
                 return new Promise((resolve, reject) => {
-                    const doc = new PDFDocument({ margin: 50 });
+                    const doc = new PDFDocument({ margin: 40 });
                     res.setHeader('Content-Type', 'application/pdf');
-                    res.setHeader('Content-Disposition', `attachment; filename="Report_${report_id}_${Date.now()}.pdf"`);
+                    res.setHeader('Content-Disposition', `attachment; filename="Department_Report_${report_id}_${Date.now()}.pdf"`);
                     doc.pipe(res);
-                    doc.fontSize(24).fillColor('#4C1D95').text('Smart Desk Report', { align: 'center' }).moveDown(0.5);
-                    doc.fontSize(14).fillColor('#1F2937').text(`Title: ${reportData.title}`, { align: 'center' }).moveDown(1);
-                    doc.fontSize(14).fillColor('#1F2937').text('Report Details', { underline: true }).moveDown(0.5);
-                    doc.fontSize(12).fillColor('#374151');
-                    [['Coordinator', reportData.coordinatorName], ['Email', reportData.coordinatorEmail], ['Target', reportData.target], ['Type', reportData.type], ['Submitted', reportData.date], ['Deadline', reportData.deadline]].forEach(([label, value]) => {
-                        doc.text(`${label}:`, { continued: true }).font('Helvetica-Bold').text(` ${value}`, { continued: false }).font('Helvetica').moveDown(0.3);
+
+                    // Header
+                    doc.fontSize(22).fillColor('#4C1D95').text('Smart Desk Department Report', { align: 'center' }).moveDown(0.3);
+                    doc.fontSize(13).fillColor('#1F2937').text(`${reportData.title}`, { align: 'center' }).moveDown(0.8);
+
+                    // Metadata Table
+                    doc.fontSize(12).fillColor('#1F2937').text('Report Overview', { underline: true }).moveDown(0.4);
+                    doc.fontSize(10).fillColor('#374151');
+                    [
+                        ['Coordinator', reportData.coordinatorName],
+                        ['Target Department / Class', reportData.target],
+                        ['Report Type', reportData.type],
+                        ['Submitted Date', reportData.date],
+                        ['Deadline', reportData.deadline]
+                    ].forEach(([label, value]) => {
+                        doc.text(`${label}:`, { continued: true }).font('Helvetica-Bold').text(` ${value}`, { continued: false }).font('Helvetica').moveDown(0.2);
                     });
+
                     doc.moveDown(0.5);
-                    doc.fontSize(14).fillColor('#1F2937').text('Content Summary', { underline: true }).moveDown(0.5);
-                    doc.fontSize(12).fillColor('#374151').text(reportData.contentSummary, { width: 500, align: 'left', lineGap: 5 }).moveDown(1);
-                    doc.fontSize(10).fillColor('#94A3B8').text('Generated by Smart Desk', { align: 'center' });
+                    doc.fontSize(12).fillColor('#1F2937').text('Coordinator Observations & Remarks', { underline: true }).moveDown(0.4);
+                    doc.fontSize(10).fillColor('#374151').text(reportData.contentSummary, { width: 520, align: 'left', lineGap: 3 }).moveDown(0.8);
+
+                    // Bundled Classes Breakdown
+                    if (bundledClasses && bundledClasses.length > 0) {
+                        doc.fontSize(14).fillColor('#4C1D95').text(`Bundled Classes Performance (${bundledClasses.length} Classes)`, { underline: true }).moveDown(0.5);
+
+                        bundledClasses.forEach((cls, idx) => {
+                            if (doc.y > 680) doc.addPage();
+                            doc.fontSize(11).fillColor('#1E40AF').font('Helvetica-Bold').text(`${idx + 1}. Class: ${cls.className} (${cls.subject || 'General'})`).font('Helvetica');
+                            doc.fontSize(9).fillColor('#4B5563');
+                            doc.text(`Teacher: ${cls.teacherName || 'N/A'} | Avg Grade: ${cls.averageGrade || 'N/A'} | Pass Rate: ${cls.passRate || 'N/A'} | Top: ${cls.topPerformer || 'N/A'}`);
+                            if (cls.teacherRemarks) doc.text(`Teacher Remarks: ${cls.teacherRemarks}`);
+                            if (cls.coordinatorRemarks) doc.text(`Coordinator Remarks: ${cls.coordinatorRemarks}`);
+
+                            if (cls.students && cls.students.length > 0) {
+                                doc.moveDown(0.2);
+                                doc.fontSize(8).fillColor('#374151');
+                                cls.students.forEach(s => {
+                                    if (doc.y > 720) doc.addPage();
+                                    doc.text(`   • ${s.name} (Roll: ${s.rollNo || 'N/A'}) - Attendance: ${s.attendance || 0}% | Mid: ${s.midTermMarks || '0'} | Quiz: ${s.quizMarks || '0'} | Assign: ${s.assignmentMarks || '0'} | Grade: ${s.overallGrade || 'N/A'}`);
+                                });
+                            }
+                            doc.moveDown(0.5);
+                        });
+                    }
+
+                    doc.fontSize(9).fillColor('#94A3B8').text('Generated by Smart Desk', { align: 'center' });
                     doc.end();
                 });
             } else if (format === 'excel') {
                 const wb = XLSX.utils.book_new();
-                const summaryData = [{ 'Report Title': reportData.title, 'Coordinator': reportData.coordinatorName, 'Email': reportData.coordinatorEmail, 'Target': reportData.target, 'Type': reportData.type, 'Submitted': reportData.date, 'Deadline': reportData.deadline }];
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), 'Summary');
-                const contentData = [['Content Summary'], [reportData.contentSummary]];
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(contentData), 'Content');
+
+                // Sheet 1: Summary
+                const summaryData = [{
+                    'Report Title': reportData.title,
+                    'Coordinator': reportData.coordinatorName,
+                    'Target': reportData.target,
+                    'Type': reportData.type,
+                    'Submitted Date': reportData.date,
+                    'Deadline': reportData.deadline,
+                    'Coordinator Remarks': reportData.contentSummary
+                }];
+                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), 'Department Summary');
+
+                // Sheet 2: Classes Performance
+                if (bundledClasses && bundledClasses.length > 0) {
+                    const classesRows = bundledClasses.map(c => ({
+                        'Class Name': c.className || '',
+                        'Subject': c.subject || '',
+                        'Teacher': c.teacherName || '',
+                        'Section': c.section || '',
+                        'Semester': c.semester || '',
+                        'Average Grade': c.averageGrade || 'N/A',
+                        'Pass Rate': c.passRate || 'N/A',
+                        'Top Performer': c.topPerformer || 'N/A',
+                        'Teacher Remarks': c.teacherRemarks || '',
+                        'Coordinator Remarks': c.coordinatorRemarks || '',
+                        'Students Count': c.students ? c.students.length : 0
+                    }));
+                    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(classesRows), 'Classes Performance');
+
+                    // Sheet 3: Individual Students Reports
+                    const studentsRows = [];
+                    bundledClasses.forEach(c => {
+                        if (c.students && c.students.length > 0) {
+                            c.students.forEach(s => {
+                                studentsRows.push({
+                                    'Class': c.className || '',
+                                    'Subject': c.subject || '',
+                                    'Student Name': s.name || '',
+                                    'Roll Number': s.rollNo || '',
+                                    'Attendance %': `${s.attendance || 0}%`,
+                                    'Mid-Term Marks': s.midTermMarks || '',
+                                    'Quiz Marks': s.quizMarks || '',
+                                    'Assignment Marks': s.assignmentMarks || '',
+                                    'Overall Grade': s.overallGrade || '',
+                                    'Status': s.status || ''
+                                });
+                            });
+                        }
+                    });
+                    if (studentsRows.length > 0) {
+                        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(studentsRows), 'Students Breakdown');
+                    }
+                }
+
                 const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
                 res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-                res.setHeader('Content-Disposition', `attachment; filename="Report_${report_id}_${Date.now()}.xlsx"`);
+                res.setHeader('Content-Disposition', `attachment; filename="Department_Report_${report_id}_${Date.now()}.xlsx"`);
                 return res.send(buffer);
             } else {
                 return res.status(400).json({ success: false, error: 'Invalid format. Use "pdf" or "excel"' });

@@ -1537,8 +1537,9 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                 COALESCE((SELECT ROUND(AVG(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100)
                     FROM attendance a WHERE a.student_id=u.user_id AND a.classroom_id=?),0) AS attendance
             FROM enrollments e
-            JOIN users u ON e.student_id=u.user_id
-            WHERE e.classroom_id=? AND e.status='Active'
+            JOIN users u ON (e.student_id = u.user_id OR e.student_id = (SELECT st.student_id FROM students st WHERE st.user_id = u.user_id LIMIT 1))
+            WHERE e.classroom_id=? AND LOWER(e.status)='active'
+            GROUP BY u.user_id, u.full_name, u.roll_no
             ORDER BY u.full_name ASC`, [classId, classId]);
 
         const formatted = [];
@@ -1580,7 +1581,15 @@ const savedFileName = Date.now() + '-' + safeOriginal;
             const r = results[0];
 
             let students = [];
-            try { students = r.detailed_data ? JSON.parse(r.detailed_data) : []; } catch (e) { students = []; }
+            try { 
+                if (Array.isArray(r.detailed_data)) {
+                    students = r.detailed_data;
+                } else if (typeof r.detailed_data === 'string' && r.detailed_data.trim()) {
+                    students = JSON.parse(r.detailed_data);
+                }
+            } catch (e) { 
+                students = []; 
+            }
 
             //  Agar saved students khali hain → live students + unki reports lao
             if (!students || students.length === 0) {
@@ -1659,8 +1668,9 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                     COALESCE((SELECT ROUND(AVG(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100)
                         FROM attendance a WHERE a.student_id=u.user_id AND a.classroom_id=?),0) AS attendance
                 FROM enrollments e
-                JOIN users u ON e.student_id=u.user_id
-                WHERE e.classroom_id=? AND e.status='Active'
+                JOIN users u ON (e.student_id = u.user_id OR e.student_id = (SELECT st.student_id FROM students st WHERE st.user_id = u.user_id LIMIT 1))
+                WHERE e.classroom_id=? AND LOWER(e.status)='active'
+                GROUP BY u.user_id, u.full_name, u.roll_no
                 ORDER BY u.full_name ASC`, [classId, classId]);
 
             const formatted = [];

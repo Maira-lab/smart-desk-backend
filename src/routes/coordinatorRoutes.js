@@ -194,6 +194,12 @@ router.get('/performance-report/:report_id',
     coordinatorController.getPerformanceReportDetails
 );
 
+router.post('/performance-report/:report_id/remarks', 
+    authMiddleware.authenticate, 
+    authMiddleware.coordinatorOnly, 
+    coordinatorController.saveCoordinatorRemarks
+);
+
 router.get('/reports/download/:report_id', 
     authMiddleware.authenticate, 
     authMiddleware.coordinatorOnly, 
