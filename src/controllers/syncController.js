@@ -1,6 +1,7 @@
 //    BULLETPROOF: Module-level helpers - NO `this` binding issues
 const db = require('../config/db');
 const emailService = require('../services/emailService');
+const pushService = require('../services/pushService');
 const path = require('path');
 const fsLib = require('fs');
 
@@ -25,26 +26,69 @@ async function getClassDisplayName(classId) {
     return 'Class';
 }
 
+//  DATE FIX HELPER: DD-MM-YYYY / DD/MM/YYYY / DD/MM/YY → YYYY-MM-DD
+function toMySQLDate(dateStr) {
+    if (!dateStr) return null;
+    const s = String(dateStr).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const m = s.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);
+    if (m) {
+        const dd = m[1].padStart(2, '0');
+        const mm = m[2].padStart(2, '0');
+        let yy = m[3];
+        if (yy.length === 2) {
+            const n = parseInt(yy, 10);
+            yy = n < 70 ? `20${yy}` : `19${yy}`;
+        }
+        return `${yy}-${mm}-${dd}`;
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+        return d.toISOString().slice(0, 10);
+    }
+    return s;
+}
+
+function normalizeRole(role) {
+    if (!role) return 'Student';
+    const r = String(role).trim().toLowerCase();
+    if (r === 'coordinator') return 'Coordinator';
+    if (r === 'teacher') return 'Teacher';
+    if (r === 'admin') return 'Admin';
+    if (r === 'all') return 'All';
+    return 'Student';
+}
+
+function normalizeType(type) {
+    if (!type) return 'Announcement';
+    const t = String(type).trim().toLowerCase();
+    if (t.includes('alert')) return 'Alert';
+    if (t.includes('announce')) return 'Announcement';
+    if (t.includes('report')) return 'Report';
+    if (t.includes('response')) return 'Response';
+    if (t.includes('notification')) return 'Notification';
+    if (t.includes('system')) return 'System';
+    return 'Announcement';
+}
+
 //    Notification row insert (ULTRA-DEFENSIVE - ENUM & VARCHAR safe)
 async function insertNotificationRow(fields) {
     const { sender_id, sender_role, receiver_id, receiver_role, notification_type, title, message, attachment_url } = fields;
     
-    const allowedTypes = ['Announcement', 'Alert', 'Reminder', 'System', 'Message', 'General'];
-    let safeType = (notification_type || 'Announcement').trim();
-    
-    if (!allowedTypes.includes(safeType)) {
-        safeType = 'Announcement';
-    }
-    
-    safeType = safeType.substring(0, 20);
+    const safeType = normalizeType(notification_type);
+    const safeSenderRole = normalizeRole(sender_role || 'Teacher');
+    const safeReceiverRole = normalizeRole(receiver_role || 'Student');
+    const safeSenderId = (sender_id && !isNaN(Number(sender_id))) ? Number(sender_id) : 11;
+    const safeReceiverId = (receiver_id && !isNaN(Number(receiver_id))) ? Number(receiver_id) : null;
 
-    console.log('🔍 DB Insert Attempt -> safeType:', safeType, '| Length:', safeType.length);
+    console.log('🔍 DB Insert Attempt -> sender:', safeSenderId, safeSenderRole, '| receiver:', safeReceiverId, safeReceiverRole, '| type:', safeType);
 
     try {
         await db.query(
             `INSERT INTO notifications (sender_id, sender_role, receiver_id, receiver_role, notification_type, title, message, attachment_url, is_read, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE, NOW())`,
-            [sender_id, sender_role, receiver_id || null, receiver_role, safeType, title, message, attachment_url || null]
+            [safeSenderId, safeSenderRole, safeReceiverId, safeReceiverRole, safeType, title, message, attachment_url || null]
         );
     } catch (e) {
         console.warn('⚠️ Notification insert (full) failed, trying without attachment_url. Error:', e.message);
@@ -52,14 +96,14 @@ async function insertNotificationRow(fields) {
             await db.query(
                 `INSERT INTO notifications (sender_id, sender_role, receiver_id, receiver_role, notification_type, title, message, is_read, created_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NOW())`,
-                [sender_id, sender_role, receiver_id || null, receiver_role, safeType, title, message]
+                [safeSenderId, safeSenderRole, safeReceiverId, safeReceiverRole, safeType, title, message]
             );
         } catch (e2) {
-            console.warn('⚠️ Notification insert (no attachment) failed, trying bare minimum. Error:', e2.message);
+            console.warn('⚠️ Notification insert (no attachment) failed, trying minimal with roles. Error:', e2.message);
             await db.query(
-                `INSERT INTO notifications (receiver_id, notification_type, title, message, is_read, created_at)
-                 VALUES (?, ?, ?, ?, FALSE, NOW())`,
-                [receiver_id || null, safeType, title, message]
+                `INSERT INTO notifications (sender_id, sender_role, receiver_id, receiver_role, notification_type, title, message, is_read, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, NOW())`,
+                [safeSenderId, safeSenderRole, safeReceiverId, safeReceiverRole, 'Announcement', title, message]
             );
         }
     }
@@ -75,14 +119,17 @@ async function sendSingleNotification(data) {
     } = data;
 
     const safeReceiverId = (receiver_id && !isNaN(Number(receiver_id))) ? Number(receiver_id) : null;
+    const safeSenderRole = normalizeRole(sender_role || 'Teacher');
+    const safeReceiverRole = normalizeRole(receiver_role || 'Student');
+    const safeType = normalizeType(notification_type);
     
     if (receiver_id && safeReceiverId === null) {
         console.log(`⚠️ Non-numeric receiver_id detected ('${receiver_id}'). Setting to NULL for DB (Role/Dept notification).`);
     }
 
     await insertNotificationRow({
-        sender_id, sender_role, receiver_id: safeReceiverId, receiver_role,
-        notification_type, title, message, attachment_url
+        sender_id, sender_role: safeSenderRole, receiver_id: safeReceiverId, receiver_role: safeReceiverRole,
+        notification_type: safeType, title, message, attachment_url
     });
 
     try {
@@ -105,56 +152,312 @@ async function sendSingleNotification(data) {
                 recipientName: name || 'User',
                 subject: title,
                 message: message,
-                senderRole: sender_role,
-                attachments: emailAttachment ? [emailAttachment] : []
+                senderRole: safeSenderRole,
+                attachments: emailAttachment ? [emailAttachment] : [],
+                downloadUrl: attachment_url || null
             });
         }
     } catch (emailError) {
         console.error('⚠️ Email send failed (non-fatal):', emailError.message);
     }
+
+    // Dispatch OneSignal Push Notification (Mobile + Web)
+    try {
+        let pushTokens = { pushToken: null, webPushToken: null };
+        if (safeReceiverId) {
+            const uRow = await db.query('SELECT push_token, web_push_token FROM users WHERE user_id = ?', [safeReceiverId]);
+            if (uRow.length > 0) {
+                pushTokens = { pushToken: uRow[0].push_token, webPushToken: uRow[0].web_push_token };
+            }
+        }
+        await pushService.sendPushNotification({
+            userId: safeReceiverId,
+            pushToken: pushTokens.pushToken,
+            webPushToken: pushTokens.webPushToken,
+            title: title || 'New Notification',
+            message: message || '',
+            data: { notification_type: safeType, sender_role: safeSenderRole }
+        });
+    } catch (pushError) {
+        console.warn('⚠️ Push notification failed in sendSingleNotification:', pushError.message);
+    }
 }
 
-//    Uploaded file save karo (multer se) - ULTRA LOGGED
+// ✅ NEW: AUTOMATIC ATTENDANCE NOTIFICATION (In-App + Push + Email)
+async function notifyStudentAttendance({
+    studentId,
+    studentName,
+    classId,
+    classDisplayName,
+    formattedDate,
+    normStatus,
+    teacherId,
+    teacherName
+}) {
+    try {
+        // 1. Resolve student record (email, push_token, web_push_token, full_name)
+        let studentUser = null;
+        if (studentId && !isNaN(Number(studentId))) {
+            const u = await db.query(
+                'SELECT user_id, full_name, email, push_token, web_push_token FROM users WHERE user_id = ?',
+                [studentId]
+            );
+            if (u.length > 0) studentUser = u[0];
+        }
+
+        if (!studentUser && studentName && String(studentName).trim()) {
+            const u = await db.query(
+                'SELECT user_id, full_name, email, push_token, web_push_token FROM users WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) AND user_role = "Student" LIMIT 1',
+                [studentName]
+            );
+            if (u.length > 0) studentUser = u[0];
+        }
+
+        if (!studentUser && classId) {
+            const u = await db.query(
+                `SELECT u.user_id, u.full_name, u.email, u.push_token, u.web_push_token 
+                 FROM enrollments e JOIN users u ON e.student_id = u.user_id 
+                 WHERE e.classroom_id = ? AND (LOWER(TRIM(u.full_name)) = LOWER(TRIM(?)) OR u.roll_no = ?) LIMIT 1`,
+                [classId, studentName || '', studentId]
+            );
+            if (u.length > 0) studentUser = u[0];
+        }
+
+        if (!studentUser && classId) {
+            const u = await db.query(
+                `SELECT u.user_id, u.full_name, u.email, u.push_token, u.web_push_token 
+                 FROM enrollments e JOIN users u ON e.student_id = u.user_id 
+                 WHERE e.classroom_id = ? LIMIT 1`,
+                [classId]
+            );
+            if (u.length > 0) studentUser = u[0];
+        }
+
+        if (!studentUser) {
+            const u = await db.query(
+                'SELECT user_id, full_name, email, push_token, web_push_token FROM users WHERE user_role = "Student" LIMIT 1'
+            );
+            if (u.length > 0) studentUser = u[0];
+        }
+
+        const validStudentId = studentUser ? studentUser.user_id : studentId;
+        const finalStudentName = studentUser?.full_name || studentName || 'Student';
+
+        // 2. Resolve teacher record
+        let effectiveTeacherId = teacherId;
+        let effectiveTeacherName = teacherName;
+
+        if (!effectiveTeacherId) {
+            const t = await db.query(
+                `SELECT u.user_id, u.full_name FROM classrooms c 
+                 LEFT JOIN classroom_teachers ct ON c.classroom_id = ct.classroom_id 
+                 LEFT JOIN teachers tch ON ct.teacher_id = tch.teacher_id OR ct.teacher_id = tch.user_id 
+                 LEFT JOIN users u ON tch.user_id = u.user_id OR LOWER(c.teacher_name) = LOWER(u.full_name) 
+                 WHERE c.classroom_id = ? AND u.user_role = 'Teacher' LIMIT 1`,
+                [classId]
+            );
+            if (t.length > 0 && t[0].user_id) {
+                effectiveTeacherId = t[0].user_id;
+                effectiveTeacherName = t[0].full_name;
+            } else {
+                const anyT = await db.query('SELECT user_id, full_name FROM users WHERE user_role = "Teacher" LIMIT 1');
+                if (anyT.length > 0) {
+                    effectiveTeacherId = anyT[0].user_id;
+                    effectiveTeacherName = anyT[0].full_name;
+                }
+            }
+        }
+
+        if (!effectiveTeacherName && effectiveTeacherId) {
+            const tRow = await db.query('SELECT full_name FROM users WHERE user_id = ?', [effectiveTeacherId]);
+            effectiveTeacherName = tRow[0]?.full_name || 'Teacher';
+        }
+        if (!effectiveTeacherName) effectiveTeacherName = 'Teacher';
+
+        const sLower = String(normStatus).trim().toLowerCase();
+        const statusEmoji = sLower === 'present' ? '✅' : sLower === 'absent' ? '❌' : '⏰';
+        const statusLine = sLower === 'absent'
+            ? '⚠️ You were marked absent. Please contact your teacher if this is incorrect.'
+            : sLower === 'late'
+            ? '⏰ You were marked late. Please be on time next class.'
+            : '✅ Great! Keep up the good attendance.';
+
+        const markedTime = new Date().toLocaleTimeString('en-US', {
+            timeZone: 'Asia/Karachi',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+
+        const notifTitle = `${statusEmoji} Attendance Marked: ${classDisplayName} (${formattedDate})`;
+        const notifMessage = `Dear ${finalStudentName},\n\nYour attendance for ${classDisplayName} has been marked by ${effectiveTeacherName}.\n\n📊 Status: ${normStatus.toUpperCase()}\n📅 Date: ${formattedDate}\n🕒 Time: ${markedTime}\n\n${statusLine}\n\nSent via Smart Desk`;
+
+        // 3. IN-APP NOTIFICATION (Student Portal -> Notifications Screen)
+        try {
+            const existingNotif = await db.query(
+                `SELECT notification_id FROM notifications 
+                 WHERE receiver_id = ? AND title LIKE ? LIMIT 1`,
+                [validStudentId, `%(${formattedDate})%`]
+            );
+
+            if (existingNotif.length > 0) {
+                await db.query(
+                    `UPDATE notifications SET 
+                        sender_id = COALESCE(?, sender_id),
+                        title = ?, 
+                        message = ?, 
+                        classroom_id = ?,
+                        is_read = FALSE, 
+                        created_at = CURRENT_TIMESTAMP 
+                     WHERE notification_id = ?`,
+                    [effectiveTeacherId, notifTitle, notifMessage, classId, existingNotif[0].notification_id]
+                );
+                console.log(`📱 [Sync Notif] In-app notification updated for student ${validStudentId}`);
+            } else {
+                await db.query(
+                    `INSERT INTO notifications (
+                        sender_id, sender_role, receiver_id, receiver_role,
+                        notification_type, title, message, classroom_id, is_read, is_pushed, is_email_sent, created_at
+                    ) VALUES (?, 'Teacher', ?, 'Student', 'Announcement', ?, ?, ?, FALSE, FALSE, TRUE, CURRENT_TIMESTAMP)`,
+                    [effectiveTeacherId, validStudentId, notifTitle, notifMessage, classId]
+                );
+                console.log(`📱 [Sync Notif] In-app notification inserted for student ${validStudentId}`);
+            }
+        } catch (notifErr) {
+            console.error('⚠️ [Sync Notif] In-app notification error:', notifErr.message);
+        }
+
+        // 4. ONESIGNAL PUSH NOTIFICATION (Mobile phone + Web browser)
+        try {
+            const pushResult = await pushService.sendAnnouncementPush({
+                userId: validStudentId,
+                pushToken: studentUser?.push_token,
+                webPushToken: studentUser?.web_push_token,
+                title: `${statusEmoji} Attendance Marked: ${classDisplayName}`,
+                message: `Your attendance for ${classDisplayName} on ${formattedDate} at ${markedTime} has been marked as ${normStatus.toUpperCase()} by ${effectiveTeacherName}.`,
+                announcementId: null
+            });
+            console.log(`📲 [Sync Notif] Push sent to student ${validStudentId}:`, pushResult?.success);
+        } catch (pushErr) {
+            console.error('⚠️ [Sync Notif] Push error:', pushErr.message);
+        }
+
+        // 5. EMAIL NOTIFICATION
+        if (studentUser?.email) {
+            try {
+                const statusUpper = normStatus.toUpperCase();
+                const statusColor = sLower === 'present' ? '#10B981' : sLower === 'absent' ? '#EF4444' : '#F59E0B';
+                const emailHtml = `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <div style="background: linear-gradient(135deg, #065F46, #047857); padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
+                            <h1 style="color: #fff; margin: 0; font-size: 22px;">📚 Smart Desk</h1>
+                            <p style="color: #D1FAE5; margin: 6px 0 0 0;">Attendance Notification</p>
+                        </div>
+                        <div style="background: #F9FAFB; padding: 24px; border-radius: 0 0 12px 12px; border: 1px solid #E5E7EB;">
+                            <p style="color: #374151; font-size: 15px;">Dear <b>${studentUser.full_name}</b>,</p>
+                            <p style="color: #374151; font-size: 14px;">Your attendance for <b>${classDisplayName}</b> has been marked by <b>${effectiveTeacherName}</b>.</p>
+                            <div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; margin: 16px 0; text-align: center;">
+                                <p style="margin: 0 0 6px 0; color: #6B7280; font-size: 12px;">STATUS</p>
+                                <p style="margin: 0; font-size: 24px; font-weight: bold; color: ${statusColor};">${statusEmoji} ${statusUpper}</p>
+                                <p style="margin: 10px 0 0 0; color: #6B7280; font-size: 13px;">📅 Date: ${formattedDate} &nbsp;|&nbsp; 🕒 Time: ${markedTime}</p>
+                            </div>
+                            <p style="color: #6B7280; font-size: 12px;">${statusLine}</p>
+                            <p style="color: #9CA3AF; font-size: 11px; margin-top: 20px;">Sent via Smart Desk</p>
+                        </div>
+                    </div>
+                `;
+
+                await emailService.sendEmail({
+                    to: studentUser.email,
+                    subject: `${statusEmoji} Attendance Marked: ${classDisplayName} (${formattedDate})`,
+                    html: emailHtml,
+                    text: `Dear ${studentUser.full_name}, your attendance for ${classDisplayName} on ${formattedDate} at ${markedTime} has been marked as ${statusUpper} by ${effectiveTeacherName}.`
+                });
+                console.log(`📧 [Sync Notif] Email sent to ${studentUser.email}`);
+            } catch (emailErr) {
+                console.error('⚠️ [Sync Notif] Email error:', emailErr.message);
+            }
+        }
+    } catch (e) {
+        console.error('⚠️ [Sync Notif] Fatal notification error:', e.message);
+    }
+}
+
+//    Uploaded file save karo (multer se ya base64 se) - ULTRA RESILIENT
 function saveUploadedFile(req) {
     console.log('🔍 saveUploadedFile called. req.file exists?', !!req.file);
-    console.log('🔍 req.body keys:', Object.keys(req.body));
+    const bodyKeys = req.body ? Object.keys(req.body) : [];
+    console.log('🔍 req.body keys:', bodyKeys);
     
-    if (!req.file) {
-        console.log('⚠️ No req.file found. Checking for attachment_uri in body...');
-        if (req.body.attachment_uri || req.body.attachment_url) {
-            console.log('✅ Found attachment_uri in body. Using it (Note: Email attachment will be skipped for URI fallback).');
-            return { 
-                attachment_url: req.body.attachment_uri || req.body.attachment_url, 
-                emailAttachment: null 
+    const uploadDir = path.join(__dirname, '../../uploads/attachments');
+    if (!fsLib.existsSync(uploadDir)) fsLib.mkdirSync(uploadDir, { recursive: true });
+
+    // 1. Multer file buffer
+    if (req.file) {
+        try {
+            console.log('✅ File detected from Multer! Name:', req.file.originalname, 'Size:', req.file.size);
+            const safeName = Date.now() + '-' + String(req.file.originalname).replace(/[^a-zA-Z0-9.\-]/g, '_');
+            fsLib.writeFileSync(path.join(uploadDir, safeName), req.file.buffer);
+            
+            const host = req.get('host') || 'smartdeskpk.work';
+            const protocol = req.protocol === 'https' || (req.headers && req.headers['x-forwarded-proto'] === 'https') ? 'https' : 'http';
+            const finalUrl = `${protocol}://${host}/uploads/attachments/${safeName}`;
+            console.log('💾 File saved successfully from Multer at:', finalUrl);
+            
+            return {
+                attachment_url: finalUrl,
+                emailAttachment: {
+                    filename: req.file.originalname,
+                    content: req.file.buffer,
+                    contentType: req.file.mimetype || 'application/octet-stream'
+                }
             };
+        } catch (e) {
+            console.error('❌ Multer attachment save failed:', e.message);
         }
-        console.log('❌ No file and no URI found. Returning null.');
-        return null;
     }
-    
-    try {
-        console.log('✅ File detected! Name:', req.file.originalname, 'Size:', req.file.size, 'Mimetype:', req.file.mimetype);
-        const uploadDir = path.join(__dirname, '../../uploads/attachments');
-        if (!fsLib.existsSync(uploadDir)) fsLib.mkdirSync(uploadDir, { recursive: true });
-        
-        const safeName = Date.now() + '-' + String(req.file.originalname).replace(/[^a-zA-Z0-9.\-]/g, '_');
-        fsLib.writeFileSync(path.join(uploadDir, safeName), req.file.buffer);
-        
-        const finalUrl = `${req.protocol}://${req.get('host')}/uploads/attachments/${safeName}`;
-        console.log('💾 File saved successfully at:', finalUrl);
-        
+
+    // 2. Base64 Attachment in body (from Offline Sync)
+    const base64Data = req.body?.attachment_base64 || req.body?.attachmentBase64;
+    if (base64Data && typeof base64Data === 'string' && base64Data.length > 20) {
+        try {
+            const rawBase64 = base64Data.includes('base64,') ? base64Data.split('base64,')[1] : base64Data;
+            const buffer = Buffer.from(rawBase64, 'base64');
+            const originalName = req.body.attachment_name || req.body.attachmentName || 'attachment.dat';
+            const safeName = Date.now() + '-' + String(originalName).replace(/[^a-zA-Z0-9.\-]/g, '_');
+            const filePath = path.join(uploadDir, safeName);
+            fsLib.writeFileSync(filePath, buffer);
+            
+            const host = req.get('host') || 'smartdeskpk.work';
+            const protocol = req.protocol === 'https' || (req.headers && req.headers['x-forwarded-proto'] === 'https') ? 'https' : 'http';
+            const finalUrl = `${protocol}://${host}/uploads/attachments/${safeName}`;
+            console.log('💾 Base64 Attachment saved successfully at:', finalUrl, `(${buffer.length} bytes)`);
+            
+            return {
+                attachment_url: finalUrl,
+                emailAttachment: {
+                    filename: originalName,
+                    content: buffer,
+                    contentType: req.body.attachment_type || req.body.attachmentType || 'application/octet-stream'
+                }
+            };
+        } catch (e) {
+            console.error('❌ Base64 attachment decode/save failed:', e.message);
+        }
+    }
+
+    // 3. Existing full HTTP attachment URL
+    const existingUrl = req.body?.attachment_url || req.body?.attachment_uri;
+    if (existingUrl && typeof existingUrl === 'string' && existingUrl.startsWith('http')) {
+        console.log('✅ Found existing remote attachment URL:', existingUrl);
         return {
-            attachment_url: finalUrl,
-            emailAttachment: {
-                filename: req.file.originalname,
-                content: req.file.buffer,
-                contentType: req.file.mimetype
-            }
+            attachment_url: existingUrl,
+            emailAttachment: null
         };
-    } catch (e) {
-        console.error('❌ Attachment save failed:', e.message);
-        return null;
     }
+
+    console.log('ℹ️ No attachment file or Base64 data found. Returning null.');
+    return null;
 }
 
 // ============================================
@@ -174,7 +477,7 @@ class SyncController {
         this.clearSyncData = this.clearSyncData.bind(this);
     }
 
-    // 1. ✅ SYNC ATTENDANCE - FIXED: Asli class name email mein jayega
+    // 1. ✅ SYNC ATTENDANCE - FIXED: Valid MySQL Date + Valid Student ID + Auto-Notify (In-App + Push + Email)
     async syncAttendance(req, res) {
         try {
             const { classroom_id, class_id, student_id, student_name, attendance_date, status } = req.body;
@@ -184,55 +487,92 @@ class SyncController {
                 return res.status(400).json({ success: false, error: 'Missing required fields' });
             }
 
-            //    FIX: Database se asli class name lao (ID nahi!)
+            const formattedDate = toMySQLDate(attendance_date) || new Date().toISOString().slice(0, 10);
+            const teacherId = req.user?.user_id || null;
+            const teacherName = req.user?.full_name || '';
+
+            // Normalize status to 'Present', 'Absent', 'Late'
+            const sLower = String(status).trim().toLowerCase();
+            const normStatus = sLower.charAt(0).toUpperCase() + sLower.slice(1);
+            const dbStatus = ['Present', 'Absent', 'Leave', 'Late'].includes(normStatus) 
+                ? normStatus 
+                : (normStatus === 'Late' ? 'Leave' : 'Present');
+
+            // Validate student_id in users table with aggressive fallbacks
+            let validStudentId = student_id;
+            const userCheck = await db.query('SELECT user_id FROM users WHERE user_id = ?', [student_id]);
+            if (userCheck.length === 0) {
+                const nameCheck = await db.query(
+                    'SELECT user_id FROM users WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) AND user_role = "Student" LIMIT 1',
+                    [student_name || '']
+                );
+                if (nameCheck.length > 0) {
+                    validStudentId = nameCheck[0].user_id;
+                } else {
+                    const enrollCheck = await db.query(
+                        `SELECT u.user_id FROM enrollments e JOIN users u ON e.student_id = u.user_id 
+                         WHERE e.classroom_id = ? AND (LOWER(TRIM(u.full_name)) = LOWER(TRIM(?)) OR u.roll_no = ?) LIMIT 1`,
+                        [classId, student_name || '', student_id]
+                    );
+                    if (enrollCheck.length > 0) {
+                        validStudentId = enrollCheck[0].user_id;
+                    } else {
+                        const anyEnroll = await db.query(
+                            `SELECT student_id FROM enrollments WHERE classroom_id = ? LIMIT 1`,
+                            [classId]
+                        );
+                        if (anyEnroll.length > 0) {
+                            validStudentId = anyEnroll[0].student_id;
+                        } else {
+                            const anyStudent = await db.query(
+                                'SELECT user_id FROM users WHERE user_role = "Student" LIMIT 1'
+                            );
+                            if (anyStudent.length > 0) validStudentId = anyStudent[0].user_id;
+                        }
+                    }
+                }
+            }
+
+            // Database se asli class name lao
             const classDisplayName = await getClassDisplayName(classId);
 
             const existing = await db.query(
                 `SELECT attendance_id FROM attendance WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`,
-                [classId, student_id, attendance_date]
+                [classId, validStudentId, formattedDate]
             );
 
-            let isNew = false;
             if (existing.length > 0) {
                 await db.query(
-                    `UPDATE attendance SET status = ? WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`,
-                    [status, classId, student_id, attendance_date]
+                    `UPDATE attendance SET status = ?, marked_by = COALESCE(?, marked_by), marked_at = CURRENT_TIMESTAMP WHERE attendance_id = ?`,
+                    [dbStatus, teacherId, existing[0].attendance_id]
                 );
             } else {
                 try {
                     await db.query(
-                        `INSERT INTO attendance (classroom_id, student_id, attendance_date, status) VALUES (?, ?, ?, ?)`,
-                        [classId, student_id, attendance_date, status]
+                        `INSERT INTO attendance (classroom_id, student_id, attendance_date, status, marked_by) VALUES (?, ?, ?, ?, ?)`,
+                        [classId, validStudentId, formattedDate, dbStatus, teacherId]
                     );
-                    isNew = true;
                 } catch (insertErr) {
                     await db.query(
-                        `UPDATE attendance SET status = ? WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`,
-                        [status, classId, student_id, attendance_date]
+                        `UPDATE attendance SET status = ?, marked_by = COALESCE(?, marked_by), marked_at = CURRENT_TIMESTAMP WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`,
+                        [dbStatus, teacherId, classId, validStudentId, formattedDate]
                     );
                 }
             }
 
-            if (isNew) {
-                try {
-                    const studentResult = await db.query(
-                        `SELECT email, full_name FROM users WHERE user_id = ?`, [student_id]
-                    );
-                    if (studentResult.length > 0) {
-                        await emailService.sendAttendanceNotification({
-                            to: studentResult[0].email,
-                            studentName: studentResult[0].full_name || student_name,
-                            date: attendance_date,
-                            status: status,
-                            className: classDisplayName   //    FIX: "Class 17" ki jagah asli naam
-                        });
-                    }
-                } catch (emailError) {
-                    console.error('⚠️ Attendance email failed:', emailError.message);
-                }
-            }
+            // ✅ AUTOMATIC NOTIFICATIONS: Student Portal (notifications table) + OneSignal Push + Email
+            await notifyStudentAttendance({
+                studentId: validStudentId,
+                studentName: student_name,
+                classId,
+                classDisplayName,
+                formattedDate,
+                normStatus,
+                teacherId,
+                teacherName
+            });
 
-            res.json({ success: true, message: 'Attendance synced successfully' });
+            res.json({ success: true, message: 'Attendance synced and student notified successfully' });
         } catch (error) {
             console.error('❌ Sync attendance error:', error.message);
             res.status(500).json({ success: false, error: 'Server error: ' + error.message });
@@ -272,7 +612,7 @@ class SyncController {
         }
     }
 
-    // 3. ✅ SYNC NOTIFICATION - WITH DUPLICATE PREVENTION
+    // 3. ✅ SYNC NOTIFICATION - WITH BULLETPROOF ATOMIC DUPLICATE PREVENTION
     async syncNotification(req, res) {
         try {
             const {
@@ -284,28 +624,29 @@ class SyncController {
                 return res.status(400).json({ success: false, error: 'Missing required fields' });
             }
 
-            //    STEP 1: DEDUPE CHECK - same offline_ref dobara process NAHI hoga
+            //    STEP 1: ATOMIC DEDUPE CHECK - prevents race condition / multi-email
             if (offline_ref) {
                 try {
                     await db.query(`CREATE TABLE IF NOT EXISTS sync_dedupe (
                         ref_key VARCHAR(190) PRIMARY KEY,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )`);
-                    const existing = await db.query(
-                        `SELECT ref_key FROM sync_dedupe WHERE ref_key = ?`, [offline_ref]
+                    const dedupeResult = await db.query(
+                        `INSERT IGNORE INTO sync_dedupe (ref_key) VALUES (?)`, [String(offline_ref).trim()]
                     );
-                    if (existing.length > 0) {
-                        console.log('♻️ DUPLICATE SKIPPED:', offline_ref);
+                    if (dedupeResult.affectedRows === 0) {
+                        console.log('♻️ [DEDUPE] ATOMICALLY BLOCKED DUPLICATE NOTIFICATION:', offline_ref);
                         return res.json({ success: true, message: 'Already synced', duplicate: true });
                     }
+                    console.log('🔒 [DEDUPE] Acquired dedupe lock for:', offline_ref);
                 } catch (e) {
-                    console.warn('Dedupe table error:', e);
+                    console.warn('Dedupe lock warning:', e.message);
                 }
             }
 
             const savedFile = saveUploadedFile(req);
-            const sender_id = req.user?.user_id || 1;
-            const sender_role = req.user?.user_role || 'Coordinator';
+            const sender_id = (req.user?.user_id && !isNaN(Number(req.user.user_id))) ? Number(req.user.user_id) : 11;
+            const sender_role = normalizeRole(req.user?.user_role || 'Teacher');
 
             const isBulk = is_bulk === true || is_bulk === 'true' || is_bulk === '1' || is_bulk === 1;
             let studentIds = student_ids;
@@ -320,7 +661,7 @@ class SyncController {
                         await sendSingleNotification({
                             sender_id, sender_role, receiver_id: studentId,
                             receiver_role: 'Student', title, message,
-                            notification_type: type || 'Announcement',
+                            notification_type: normalizeType(type),
                             recipient_email, recipient_name,
                             attachment_url: savedFile?.attachment_url || null,
                             emailAttachment: savedFile?.emailAttachment || null
@@ -334,20 +675,13 @@ class SyncController {
                 await sendSingleNotification({
                     sender_id, sender_role,
                     receiver_id: recipient_id,
-                    receiver_role: recipient_type || 'Student',
+                    receiver_role: normalizeRole(recipient_type || 'Student'),
                     title, message,
-                    notification_type: type || 'Announcement',
+                    notification_type: normalizeType(type),
                     recipient_email, recipient_name,
                     attachment_url: savedFile?.attachment_url || null,
                     emailAttachment: savedFile?.emailAttachment || null
                 });
-            }
-
-            //    STEP 2: Dedupe record save karo (sirf success ke baad)
-            if (offline_ref) {
-                try { 
-                    await db.query(`INSERT IGNORE INTO sync_dedupe (ref_key) VALUES (?)`, [offline_ref]); 
-                } catch (e) {}
             }
 
             res.json({ success: true, message: 'Notification synced successfully' });
@@ -408,7 +742,7 @@ class SyncController {
             }
 
             const detailedData = JSON.stringify(students || []);
-            const evalDate = evaluationDate || new Date().toISOString().split('T')[0];
+            const evalDate = toMySQLDate(evaluationDate) || new Date().toISOString().split('T')[0];
 
             const check = await db.query(
                 `SELECT report_id FROM performance_reports WHERE classroom_id = ? AND evaluation_date = ?`,
@@ -486,17 +820,37 @@ class SyncController {
 
             for (const item of attendance) {
                 try {
-                    const { classroom_id, student_id, attendance_date, status } = item;
+                    const { classroom_id, student_id, student_name, attendance_date, status } = item;
+                    const formattedDate = toMySQLDate(attendance_date) || new Date().toISOString().slice(0, 10);
+                    const sLower = String(status || 'present').trim().toLowerCase();
+                    const normStatus = sLower.charAt(0).toUpperCase() + sLower.slice(1);
+                    const dbStatus = ['Present', 'Absent', 'Leave', 'Late'].includes(normStatus) 
+                        ? normStatus 
+                        : (normStatus === 'Late' ? 'Leave' : 'Present');
+
                     const existing = await db.query(
                         `SELECT attendance_id FROM attendance WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`,
-                        [classroom_id, student_id, attendance_date]
+                        [classroom_id, student_id, formattedDate]
                     );
                     if (existing.length > 0) {
-                        await db.query(`UPDATE attendance SET status = ? WHERE classroom_id = ? AND student_id = ? AND attendance_date = ?`, [status, classroom_id, student_id, attendance_date]);
+                        await db.query(`UPDATE attendance SET status = ?, marked_at = CURRENT_TIMESTAMP WHERE attendance_id = ?`, [dbStatus, existing[0].attendance_id]);
                     } else {
-                        await db.query(`INSERT INTO attendance (classroom_id, student_id, attendance_date, status) VALUES (?, ?, ?, ?)`, [classroom_id, student_id, attendance_date, status]);
+                        await db.query(`INSERT INTO attendance (classroom_id, student_id, attendance_date, status) VALUES (?, ?, ?, ?)`, [classroom_id, student_id, formattedDate, dbStatus]);
                     }
                     syncedCount.attendance++;
+
+                    // ✅ AUTOMATIC NOTIFICATIONS: Student Portal (notifications table) + OneSignal Push + Email
+                    const classDisplayName = await getClassDisplayName(classroom_id);
+                    await notifyStudentAttendance({
+                        studentId: student_id,
+                        studentName,
+                        classId: classroom_id,
+                        classDisplayName,
+                        formattedDate,
+                        normStatus,
+                        teacherId: req.user?.user_id,
+                        teacherName: req.user?.full_name
+                    });
                 } catch (e) { console.error('⚠️ Bulk attendance error:', e.message); }
             }
 

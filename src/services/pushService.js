@@ -2,17 +2,21 @@
 // ONESIGNAL PUSH NOTIFICATION SERVICE
 
 const fetch = require('node-fetch');
-require('dotenv').config();
+const path = require('path');
+try { require('dotenv').config({ path: path.join(__dirname, '../../.env') }); } catch (e) {}
+try { require('dotenv').config({ path: path.join(__dirname, '../.env') }); } catch (e) {}
+try { require('dotenv').config(); } catch (e) {}
 
-const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
-const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || '694b8371-cfe4-4bc1-8498-ffb4526cf6c0';
+const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY || '';
 
 class PushService {
     constructor() {
-        this.initialized = false;
-        if (ONESIGNAL_APP_ID && ONESIGNAL_API_KEY) {
-            this.initialized = true;
-            console.log('✅ Push Service Initialized (OneSignal)');
+        this.appId = process.env.ONESIGNAL_APP_ID || ONESIGNAL_APP_ID;
+        this.apiKey = process.env.ONESIGNAL_API_KEY || ONESIGNAL_API_KEY;
+        this.initialized = !!(this.appId && this.apiKey);
+        if (this.initialized) {
+            console.log('✅ Push Service Initialized (OneSignal App ID:', this.appId.slice(0, 8) + '...)');
         } else {
             console.warn('⚠️ Push Service not initialized - missing OneSignal credentials');
         }
@@ -23,25 +27,35 @@ class PushService {
     //  
     async sendPushNotification({ userId, pushToken, webPushToken, title, message, data = {} }) {
         try {
-            if (!this.initialized) {
+            const appId = this.appId || process.env.ONESIGNAL_APP_ID || ONESIGNAL_APP_ID;
+            const apiKey = this.apiKey || process.env.ONESIGNAL_API_KEY || ONESIGNAL_API_KEY;
+
+            if (!appId || !apiKey) {
                 return { success: false, error: 'Push service not initialized' };
             }
 
             let sentSuccess = false;
             let lastResult = null;
 
+            // Base notification payload with Web click URL & icons
+            const basePayload = {
+                app_id: appId,
+                headings: { en: title },
+                contents: { en: message },
+                data: data,
+                priority: 10,
+                ttl: 86400,
+                url: 'https://smartdeskpk.work',
+                chrome_web_default_notification_icon: 'https://smartdeskpk.work/favicon.ico'
+            };
+
             // 1. Target via external_id (Reaches all logged-in devices of user: Mobile + Web)
             if (userId) {
                 try {
                     const aliasPayload = {
-                        app_id: ONESIGNAL_APP_ID,
+                        ...basePayload,
                         include_aliases: { external_id: [String(userId)] },
-                        target_channel: 'push',
-                        headings: { en: title },
-                        contents: { en: message },
-                        data: data,
-                        priority: 10,
-                        ttl: 86400
+                        target_channel: 'push'
                     };
 
                     const response = await fetch('https://api.onesignal.com/notifications', {
@@ -76,14 +90,9 @@ class PushService {
 
             if (subIds.length > 0) {
                 try {
-                    const subPayload = {
-                        app_id: ONESIGNAL_APP_ID,
-                        include_subscription_ids: subIds,
-                        headings: { en: title },
-                        contents: { en: message },
-                        data: data,
-                        priority: 10,
-                        ttl: 86400
+                    let subPayload = {
+                        ...basePayload,
+                        include_subscription_ids: subIds
                     };
 
                     let response = await fetch('https://api.onesignal.com/notifications', {
@@ -100,9 +109,10 @@ class PushService {
 
                     // Fallback to include_player_ids if subscription_ids failed
                     if (!result.id) {
-                        subPayload.include_player_ids = subIds;
-                        delete subPayload.include_subscription_ids;
-
+                        subPayload = {
+                            ...basePayload,
+                            include_player_ids: subIds
+                        };
                         response = await fetch('https://api.onesignal.com/notifications', {
                             method: 'POST',
                             headers: {

@@ -22,7 +22,8 @@ class Database {
             idleTimeout: 60000,
             queueLimit: 0,
             enableKeepAlive: true,
-            keepAliveInitialDelay: 10000
+            keepAliveInitialDelay: 10000,
+            timezone: '+05:00'
         };
 
         this.pool = mysql.createPool(this.config);

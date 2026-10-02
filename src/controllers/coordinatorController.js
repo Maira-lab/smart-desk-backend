@@ -1036,7 +1036,7 @@ class CoordinatorController {
                     senderRole: notif.senderRole || 'Admin',
                     senderId: notif.senderId?.toString() || null,
                     senderName: notif.senderName || null,
-                    senderEmail: notif.senderEmail || null,
+                    senderEmail: null,
                     attachmentUrl: notif.attachmentUrl || null
                 };
             });
@@ -2917,7 +2917,7 @@ Please review the report in your dashboard.`;
             const role = roleMap[type] || 'Teacher';
 
             let query = `
-                SELECT u.user_id AS id, u.full_name AS name, u.email, u.user_role AS role
+                SELECT u.user_id AS id, u.full_name AS name, u.email, u.user_role AS role, u.institute_name AS department
                 FROM users u
                 WHERE u.status = 'Active' AND u.user_role = ?
             `;

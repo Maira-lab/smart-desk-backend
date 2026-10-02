@@ -1,15 +1,24 @@
 {
   "name": "smart-desk-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Smart Desk Backend API - High-performance Node.js/Express REST API with MySQL, JWT authentication, OneSignal push notifications, and automated transactional emails.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "android": "expo run:android",
     "ios": "expo run:ios"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "smart-desk",
+    "smart desk",
+    "academic-backend",
+    "rest-api",
+    "express",
+    "mysql",
+    "jwt-auth",
+    "push-notifications"
+  ],
+  "author": "Maira",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {

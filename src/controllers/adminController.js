@@ -734,12 +734,51 @@ async recoverAccount(req, res) {
             if (notification_mode === 'auto-email' || notification_mode === 'manual') {
                 try {
                     const emailService = require('../services/emailService');
-                    const toEmail = notification_mode === 'auto-email' ? email : manual_email;
+                    const toEmail = (notification_mode === 'manual' && manual_email) 
+                        ? String(manual_email).trim() 
+                        : String(email).trim();
+
+                    const messageContent = (notification_mode === 'manual' && custom_message && custom_message.trim())
+                        ? `<div style="background:#f8fafc;border-left:4px solid #7c3aed;padding:14px;border-radius:6px;margin:16px 0;color:#334155;font-size:14px;line-height:1.6;">${String(custom_message).trim().replace(/\n/g, '<br>')}</div>`
+                        : '';
+
+                    const html = `
+                    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+                        <div style="background: linear-gradient(135deg, #7C3AED, #4F46E5); padding: 28px 24px; text-align: center;">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: 0.5px;">📖 Smart Desk</h1>
+                            <p style="color: #ede9fe; margin: 6px 0 0 0; font-size: 14px;">Coordinator Account Credentials</p>
+                        </div>
+                        <div style="padding: 28px 24px; background: #ffffff;">
+                            <p style="font-size: 16px; color: #1e293b; margin: 0 0 14px 0;">Hello <strong>${full_name}</strong>,</p>
+                            <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+                                Your Coordinator account for <strong>${institute_name || 'Smart Desk Academic Portal'}</strong> has been created.
+                            </p>
+                            ${messageContent}
+                            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; margin: 20px 0;">
+                                <div style="font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px;">Account Credentials</div>
+                                <div style="font-size: 14px; color: #1e293b; margin-bottom: 8px;"><strong>Role:</strong> Coordinator</div>
+                                <div style="font-size: 14px; color: #1e293b; margin-bottom: 8px;"><strong>Login Email:</strong> <span style="color:#4f46e5;font-weight:600;">${email}</span></div>
+                                <div style="font-size: 14px; color: #1e293b;"><strong>Password:</strong> <span style="font-family:monospace;background:#e2e8f0;padding:2px 6px;border-radius:4px;font-weight:700;">${password}</span></div>
+                            </div>
+                            <div style="text-align: center; margin: 24px 0 16px 0;">
+                                <a href="https://smartdeskpk.work/login" style="background: #7C3AED; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 24px; font-size: 14px; font-weight: 700; display: inline-block;">
+                                    Sign In to Smart Desk
+                                </a>
+                            </div>
+                            <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: 16px 0 0 0;">
+                                Or access via Android App: <a href="https://smartdeskpk.work/smart-desk.apk" style="color:#7C3AED;text-decoration:none;">Download APK</a>
+                            </p>
+                        </div>
+                    </div>`;
+
+                    const text = `Hello ${full_name},\n\nYour Coordinator account for ${institute_name || 'Smart Desk'} has been created.\n\nLogin Email: ${email}\nPassword: ${password}\nRole: Coordinator\n\nLogin at: https://smartdeskpk.work/login\n\nSmart Desk Team`;
+
+                    console.log(`📧 Sending coordinator notification (${notification_mode}) to: ${toEmail}`);
                     const result = await emailService.sendEmail({
                         to: toEmail,
-                        subject: '🎉 Welcome to Smart Desk - Your Coordinator Account',
-                        html: `<h2>Welcome, ${full_name}! 🎉</h2><p>Your coordinator account has been created.</p><p><b>Email:</b> ${email}<br><b>Password:</b> ${password}<br><b>Role:</b> Coordinator</p><p>Please login to Smart Desk app.</p><p>Smart Desk Team</p>`,
-                        text: `Welcome ${full_name}!\n\nEmail: ${email}\nPassword: ${password}\nRole: Coordinator\n\nSmart Desk Team`
+                        subject: `🎉 Smart Desk Coordinator Account Credentials - ${full_name}`,
+                        html,
+                        text
                     });
                     notificationStatus = result.success ? 'sent' : 'failed';
                     notificationDetails = result;

@@ -1,4 +1,5 @@
 //  OOP APPROACH - Complete with all fixes applied
+process.env.TZ = 'Asia/Karachi';
 
 const express = require('express');
 const cors = require('cors');

@@ -70,7 +70,7 @@ function toMySQLDate(dateStr) {
     const s = String(dateStr).trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.split(' ')[0];
-    const m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2}|\d{4})$/);
+    const m = s.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);
     if (m) {
         const dd = m[1].padStart(2, '0');
         const mm = m[2].padStart(2, '0');
@@ -81,8 +81,10 @@ function toMySQLDate(dateStr) {
         }
         return `${yy}-${mm}-${dd}`;
     }
-    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+        return d.toISOString().slice(0, 10);
+    }
     return s;
 }
 
@@ -364,6 +366,12 @@ class TeacherController {
                         const statusUpper = status.toUpperCase();
                         const statusEmoji = status === 'present' ? '✅' : status === 'absent' ? '❌' : '⏰';
                         const statusColor = status === 'present' ? '#10B981' : status === 'absent' ? '#EF4444' : '#F59E0B';
+                        const markedTime = new Date().toLocaleTimeString('en-US', {
+                            timeZone: 'Asia/Karachi',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                        });
                         
                         const emailHtml = `
                             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -377,7 +385,7 @@ class TeacherController {
                                     <div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; margin: 16px 0; text-align: center;">
                                         <p style="margin: 0 0 6px 0; color: #6B7280; font-size: 12px;">STATUS</p>
                                         <p style="margin: 0; font-size: 24px; font-weight: bold; color: ${statusColor};">${statusEmoji} ${statusUpper}</p>
-                                        <p style="margin: 10px 0 0 0; color: #6B7280; font-size: 13px;">📅 Date: ${attendance_date}</p>
+                                        <p style="margin: 10px 0 0 0; color: #6B7280; font-size: 13px;">📅 Date: ${attendance_date} &nbsp;|&nbsp; 🕒 Time: ${markedTime}</p>
                                     </div>
                                     <p style="color: #6B7280; font-size: 12px;">${status === 'absent' ? '⚠️ You were marked absent. Please contact your teacher if this is incorrect.' : status === 'late' ? '⏰ You were marked late. Please be on time next class.' : '✅ Great! Keep up the good attendance.'}</p>
                                     <p style="color: #9CA3AF; font-size: 11px; margin-top: 20px;">Sent via Smart Desk</p>
@@ -389,7 +397,7 @@ class TeacherController {
                             to: st.email,
                             subject: `${statusEmoji} Attendance Marked: ${subjectName} (${attendance_date})`,
                             html: emailHtml,
-                            text: `Dear ${st.full_name}, your attendance for ${subjectName} on ${attendance_date} has been marked as ${statusUpper} by ${teacherName}.`
+                            text: `Dear ${st.full_name}, your attendance for ${subjectName} on ${attendance_date} at ${markedTime} has been marked as ${statusUpper} by ${teacherName}.`
                         });
                         if (emailResult.success) emailSentCount++;
                     }
@@ -407,6 +415,13 @@ class TeacherController {
                         ? '⏰ You were marked late. Please be on time next class.'
                         : '✅ Great! Keep up the good attendance.';
 
+                    const markedTime2 = new Date().toLocaleTimeString('en-US', {
+                        timeZone: 'Asia/Karachi',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: true
+                    });
+
                     await db.query(`
                         INSERT INTO notifications (
                             sender_id, sender_role, receiver_id, receiver_role,
@@ -416,7 +431,7 @@ class TeacherController {
                         teacherId,
                         student_id,
                         `${statusEmoji2} Attendance Marked: ${subjectName} (${attendance_date})`,
-                        `Dear ${stName},\n\nYour attendance for ${subjectName}${className ? ` (${className})` : ''} has been marked by ${teacherName}.\n\n📊 Status: ${status.toUpperCase()}\n📅 Date: ${attendance_date}\n\n${statusLine2}\n\nSent via Smart Desk`
+                        `Dear ${stName},\n\nYour attendance for ${subjectName}${className ? ` (${className})` : ''} has been marked by ${teacherName}.\n\n📊 Status: ${status.toUpperCase()}\n📅 Date: ${attendance_date}\n🕒 Time: ${markedTime2}\n\n${statusLine2}\n\nSent via Smart Desk`
                     ]);
                 } catch (notifErr) {
                     console.error('⚠️ Attendance notification error:', notifErr.message);
@@ -427,12 +442,18 @@ class TeacherController {
                     const stToken = await db.query('SELECT push_token, web_push_token, full_name FROM users WHERE user_id = ?', [student_id]);
                     if (stToken.length > 0) {
                         const pushEmoji = status === 'present' ? '✅' : status === 'absent' ? '❌' : '⏰';
+                        const markedTime3 = new Date().toLocaleTimeString('en-US', {
+                            timeZone: 'Asia/Karachi',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                        });
                         const pushResult = await pushService.sendAnnouncementPush({
                             userId: student_id,
                             pushToken: stToken[0].push_token,
                             webPushToken: stToken[0].web_push_token,
                             title: `${pushEmoji} Attendance Marked: ${subjectName}`,
-                            message: `Your attendance for ${subjectName} on ${attendance_date} has been marked as ${status.toUpperCase()} by ${teacherName}.`,
+                            message: `Your attendance for ${subjectName} on ${attendance_date} at ${markedTime3} has been marked as ${status.toUpperCase()} by ${teacherName}.`,
                             announcementId: null
                         });
                         if (pushResult && pushResult.success) {
@@ -484,7 +505,13 @@ class TeacherController {
             else { dateCondition = 'AND a.attendance_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)'; }
             const query = `SELECT a.attendance_id AS id, u.full_name AS studentName, u.roll_no AS rollNo, a.status, a.attendance_date AS date, DATE_FORMAT(a.attendance_date, '%b %d, %Y') AS formattedDate, DAYNAME(a.attendance_date) AS day, a.marked_at, tu.full_name AS markedBy FROM attendance a JOIN users u ON (a.student_id = u.user_id OR a.student_id = (SELECT st.student_id FROM students st WHERE st.user_id = u.user_id LIMIT 1)) LEFT JOIN teachers t ON a.marked_by = t.teacher_id LEFT JOIN users tu ON tu.user_id = COALESCE(t.user_id, a.marked_by) WHERE a.classroom_id = ? ${dateCondition} ORDER BY a.attendance_date DESC, u.full_name ASC`;
             const results = await db.query(query, params);
-            const summary = { total: results.length, present: results.filter(r => r.status === 'present').length, absent: results.filter(r => r.status === 'absent').length, late: results.filter(r => r.status === 'late').length, unmarked: 0 };
+            const summary = { 
+                total: results.length, 
+                present: results.filter(r => String(r.status || '').toLowerCase() === 'present').length, 
+                absent: results.filter(r => String(r.status || '').toLowerCase() === 'absent').length, 
+                late: results.filter(r => String(r.status || '').toLowerCase() === 'late').length, 
+                unmarked: 0 
+            };
             res.json({ success: true, records: results, summary, count: results.length });
         } catch (error) { res.status(500).json({ success: false, error: 'Server error: ' + error.message }); }
     }
@@ -807,7 +834,7 @@ class TeacherController {
             else if (filter === 'replies' || filter === 'student') { countQuery += ` AND n.notification_type IN ('Reply', 'Response')`; }
             const countResult = await db.query(countQuery, countParams);
 
-            const formattedNotifications = notifications.map(n => ({ id: String(n.id), from: n.from_name || 'System', fromRole: n.from_role || 'System', subject: n.subject || 'No Subject', message: n.message || '', attachmentUrl: n.attachmentUrl || null, hasAttachment: !!n.attachmentUrl, date: new Date(n.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), read: n.is_read === 1, hasResponse: n.response_count > 0, responseCount: n.response_count || 0 }));
+            const formattedNotifications = notifications.map(n => ({ id: String(n.id), from: n.from_name || 'System', fromRole: n.from_role || 'System', subject: n.subject || 'No Subject', message: n.message || '', attachmentUrl: n.attachmentUrl || null, hasAttachment: !!n.attachmentUrl, date: new Date(n.date).toLocaleString('en-US', { timeZone: 'Asia/Karachi', month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }), read: n.is_read === 1, hasResponse: n.response_count > 0, responseCount: n.response_count || 0 }));
             res.json({ success: true, notifications: formattedNotifications, pagination: { currentPage: parseInt(page), totalItems: countResult[0]?.total || 0, totalPages: Math.ceil((countResult[0]?.total || 0) / limit) } });
         } catch (error) { res.status(500).json({ success: false, error: 'Failed to load notifications: ' + error.message }); }
     }
@@ -822,7 +849,7 @@ class TeacherController {
             const results = await db.query(query, [id, teacherId]);
             if (results.length === 0) return res.status(404).json({ success: false, error: 'Notification not found' });
             const n = results[0];
-            res.json({ success: true, notification: { id: String(n.id), from: n.from_name || 'System', fromRole: n.from_role || 'System', subject: n.subject || 'No Subject', message: n.message || '', attachmentUrl: n.attachmentUrl || null, hasAttachment: !!n.attachmentUrl, date: new Date(n.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), read: n.is_read === 1, hasResponse: n.response_count > 0, responseCount: n.response_count || 0 } });
+            res.json({ success: true, notification: { id: String(n.id), from: n.from_name || 'System', fromRole: n.from_role || 'System', subject: n.subject || 'No Subject', message: n.message || '', attachmentUrl: n.attachmentUrl || null, hasAttachment: !!n.attachmentUrl, date: new Date(n.date).toLocaleString('en-US', { timeZone: 'Asia/Karachi', month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }), read: n.is_read === 1, hasResponse: n.response_count > 0, responseCount: n.response_count || 0 } });
         } catch (error) { res.status(500).json({ success: false, error: 'Failed to load notification: ' + error.message }); }
     }
 

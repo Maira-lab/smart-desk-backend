@@ -379,7 +379,7 @@ class StudentController {
                     message: n.message || '',
                     type: (n.type || 'announcement').toLowerCase(),
                     sender: n.senderName || (role === 'admin' ? 'Admin Office' : (n.senderRoleRaw || 'Unknown')),
-                    senderEmail: n.senderEmail || '',
+                    senderEmail: '',
                     senderRole: role,
                     date: n.date,
                     read: n.isRead === 1,

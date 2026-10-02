@@ -3,6 +3,18 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+function getFormattedPKTDateTime(date = new Date()) {
+    return new Date(date).toLocaleString('en-US', {
+        timeZone: 'Asia/Karachi',
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
+}
+
 class EmailService {
     constructor() {
         this.transporter = null;
@@ -77,6 +89,7 @@ class EmailService {
                 subject: subject,
                 text: cleanText,
                 html: html || text || '',
+                date: new Date(),
                 headers: {
                     'X-Priority': '3',
                     'X-Mailer': 'SmartDesk Academic Portal',
@@ -164,7 +177,7 @@ class EmailService {
                         </div>
                     </div>
                     <div class="footer">
-                        <p>Smart Desk • ${new Date().toLocaleString()}</p>
+                        <p>Smart Desk • ${getFormattedPKTDateTime()}</p>
                     </div>
                 </div>
             </body>
@@ -256,7 +269,7 @@ class EmailService {
                         </div>
                     </div>
                     <div class="footer">
-                        <p>Smart Desk • ${new Date().toLocaleString()}</p>
+                        <p>Smart Desk • ${getFormattedPKTDateTime()}</p>
                     </div>
                 </div>
             </body>
@@ -358,7 +371,7 @@ class EmailService {
                         <div class="message">${message}</div>
                         ${imageHtml}
                         ${downloadCardHtml}
-                        <div class="meta">Sent via Smart Desk • ${new Date().toLocaleString()}</div>
+                        <div class="meta">Sent via Smart Desk • ${getFormattedPKTDateTime()}</div>
                     </div>
                     <div class="footer">
                         <p>This is an automated notification from Smart Desk</p>
@@ -409,7 +422,7 @@ class EmailService {
                         ${!isApproved && reason ? `<div class="message" style="margin-top:10px;"><strong>Reason:</strong> ${reason}</div>` : ''}
                     </div>
                     <div class="footer">
-                        <p>Smart Desk • ${new Date().toLocaleString()}</p>
+                        <p>Smart Desk • ${getFormattedPKTDateTime()}</p>
                     </div>
                 </div>
             </body>

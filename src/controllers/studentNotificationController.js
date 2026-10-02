@@ -30,13 +30,13 @@ class StudentNotificationController {
             let query = `
                 SELECT 
                     n.notification_id AS id,
-                    u.full_name AS sender,
-                    u.email AS senderEmail,
-                    u.user_role AS senderRole,
+                    COALESCE(u.full_name, n.sender_role, 'Administration') AS sender,
+                    COALESCE(u.email, 'N/A') AS senderEmail,
+                    COALESCE(u.user_role, n.sender_role, 'Teacher') AS senderRole,
                     n.title AS subject,
                     n.message,
                     n.attachment_url AS attachmentUrl,
-                    DATE_FORMAT(n.created_at, '%b %d, %Y') AS date,
+                    DATE_FORMAT(n.created_at, '%b %d, %Y %h:%i %p') AS date,
                     n.notification_type AS type,
                     n.is_read AS isRead,
                     n.is_pushed AS hasPush,
@@ -46,9 +46,9 @@ class StudentNotificationController {
                         ELSE NULL
                     END AS deadline
                 FROM notifications n
-                JOIN users u ON n.sender_id = u.user_id
+                LEFT JOIN users u ON n.sender_id = u.user_id
                 WHERE (n.receiver_id = ? OR (n.receiver_id IS NULL AND (n.receiver_role = 'All' OR n.receiver_role = 'Student')))
-                AND n.sender_role IN ('Admin', 'Coordinator', 'Teacher')
+                AND (n.sender_role IS NULL OR n.sender_role IN ('Admin', 'Coordinator', 'Teacher'))
             `;
 
             const params = [studentId];
@@ -87,7 +87,7 @@ class StudentNotificationController {
                 FROM notifications
                 WHERE (receiver_id = ? OR (receiver_id IS NULL AND (receiver_role = 'All' OR receiver_role = 'Student')))
                 AND is_read = FALSE
-                AND sender_role IN ('Admin', 'Coordinator', 'Teacher')
+                AND (sender_role IS NULL OR sender_role IN ('Admin', 'Coordinator', 'Teacher'))
             `;
             const unreadResult = await db.query(unreadQuery, [studentId]);
 
@@ -131,7 +131,7 @@ class StudentNotificationController {
                     n.title AS subject,
                     n.message,
                     n.attachment_url AS attachmentUrl,
-                    DATE_FORMAT(n.created_at, '%b %d, %Y') AS date,
+                    DATE_FORMAT(n.created_at, '%b %d, %Y %h:%i %p') AS date,
                     n.notification_type AS type,
                     n.is_read AS isRead,
                     n.is_pushed AS hasPush,
