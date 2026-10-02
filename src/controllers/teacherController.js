@@ -1536,11 +1536,15 @@ const savedFileName = Date.now() + '-' + safeOriginal;
             SELECT u.user_id AS id, u.full_name AS name, u.roll_no AS rollNo,
                 COALESCE((SELECT ROUND(AVG(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100)
                     FROM attendance a WHERE a.student_id=u.user_id AND a.classroom_id=?),0) AS attendance
-            FROM enrollments e
-            JOIN users u ON (e.student_id = u.user_id OR e.student_id = (SELECT st.student_id FROM students st WHERE st.user_id = u.user_id LIMIT 1))
-            WHERE e.classroom_id=? AND LOWER(e.status)='active'
-            GROUP BY u.user_id, u.full_name, u.roll_no
-            ORDER BY u.full_name ASC`, [classId, classId]);
+            FROM users u
+            WHERE u.user_id IN (
+                SELECT e.student_id FROM enrollments e WHERE e.classroom_id = ? AND LOWER(e.status) = 'active'
+                UNION
+                SELECT st.user_id FROM enrollments e 
+                JOIN students st ON e.student_id = st.student_id 
+                WHERE e.classroom_id = ? AND LOWER(e.status) = 'active'
+            )
+            ORDER BY u.full_name ASC`, [classId, classId, classId]);
 
         const formatted = [];
         for (const s of students) {
@@ -1575,8 +1579,29 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                 LEFT JOIN semesters sem ON c.semester_id = sem.semester_id
                 WHERE pr.classroom_id = ?`, [class_id]);
 
+            const liveStudents = await this.buildLiveStudents(class_id);
+
             if (results.length === 0) {
-                return res.json({ success: false, error: 'No performance report yet' });
+                // Return fresh live data with all enrolled students
+                const clsInfo = await db.query(`SELECT class_name, subject_name, section FROM classrooms WHERE classroom_id = ?`, [class_id]);
+                return res.json({
+                    success: true,
+                    data: {
+                        classId: String(class_id),
+                        className: clsInfo[0]?.class_name || '',
+                        classType: 'class',
+                        subject: clsInfo[0]?.subject_name || '',
+                        section: clsInfo[0]?.section || '',
+                        teacherRemarks: '',
+                        coordinatorRemarks: '',
+                        averageGrade: '',
+                        passRate: '',
+                        topPerformer: '',
+                        evaluationDate: new Date().toISOString().split('T')[0],
+                        accessGranted: false,
+                        students: liveStudents
+                    }
+                });
             }
             const r = results[0];
 
@@ -1591,9 +1616,16 @@ const savedFileName = Date.now() + '-' + safeOriginal;
                 students = []; 
             }
 
-            //  Agar saved students khali hain → live students + unki reports lao
+            // Merge: ensure EVERY currently enrolled student is present
             if (!students || students.length === 0) {
-                students = await this.buildLiveStudents(class_id);
+                students = liveStudents;
+            } else {
+                const existingIds = new Set(students.map(s => String(s.id || s.studentId)));
+                for (const ls of liveStudents) {
+                    if (!existingIds.has(String(ls.id))) {
+                        students.push(ls);
+                    }
+                }
             }
 
             res.json({
@@ -1656,46 +1688,13 @@ const savedFileName = Date.now() + '-' + safeOriginal;
         }
     }
 
-    // 39. INITIALIZE CLASS PERFORMANCE
-        // 39. INITIALIZE CLASS PERFORMANCE - ✅ FIXED: Asli marks academic_reports se
+    // 39. INITIALIZE CLASS PERFORMANCE - ✅ FIXED: Asli marks academic_reports se
     async initializeClassPerformance(req, res) {
         try {
             const { classId } = req.body;
             if (!classId) return res.status(400).json({ success: false, error: 'classId required' });
 
-            const students = await db.query(`
-                SELECT u.user_id AS id, u.full_name AS name, u.roll_no AS rollNo, u.email,
-                    COALESCE((SELECT ROUND(AVG(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100)
-                        FROM attendance a WHERE a.student_id=u.user_id AND a.classroom_id=?),0) AS attendance
-                FROM enrollments e
-                JOIN users u ON (e.student_id = u.user_id OR e.student_id = (SELECT st.student_id FROM students st WHERE st.user_id = u.user_id LIMIT 1))
-                WHERE e.classroom_id=? AND LOWER(e.status)='active'
-                GROUP BY u.user_id, u.full_name, u.roll_no
-                ORDER BY u.full_name ASC`, [classId, classId]);
-
-            const formatted = [];
-            for (const s of students) {
-                //  Teacher ke enter kiye hue marks (academic_reports se)
-                const ar = await db.query(
-                    `SELECT mid_term_marks, quiz_marks, assignment_marks FROM academic_reports
-                     WHERE student_id=? AND classroom_id=? ORDER BY created_at DESC LIMIT 1`, [s.id, classId]);
-                //  Grade (marks table se)
-                const mk = await db.query(
-                    `SELECT grade FROM marks WHERE student_id=? AND classroom_id=? ORDER BY created_at DESC LIMIT 1`, [s.id, classId]);
-
-                const att = parseInt(s.attendance) || 0;
-                formatted.push({
-                    id: String(s.id),
-                    name: s.name || 'Unknown',
-                    rollNo: s.rollNo || '',
-                    attendance: att,
-                    midTermMarks: ar[0]?.mid_term_marks || '0/50',
-                    quizMarks: ar[0]?.quiz_marks || '0/20',
-                    assignmentMarks: ar[0]?.assignment_marks || '0/30',
-                    overallGrade: mk[0]?.grade || 'N/A',
-                    status: att >= 90 ? 'excellent' : att >= 75 ? 'good' : att >= 60 ? 'average' : 'needs-improvement'
-                });
-            }
+            const formatted = await this.buildLiveStudents(classId);
             res.json({ success: true, data: { students: formatted } });
         } catch (error) { res.status(500).json({ success: false, error: 'Server error: ' + error.message }); }
     }

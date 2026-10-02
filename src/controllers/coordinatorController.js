@@ -2474,8 +2474,16 @@ async getEnrolledStudents(req, res) {
                 students = []; 
             }
 
+            const liveStudents = await this.buildLiveStudents(report.classroomId);
             if (!students || students.length === 0) {
-                students = await this.buildLiveStudents(report.classroomId);
+                students = liveStudents;
+            } else {
+                const existingIds = new Set(students.map(s => String(s.id || s.studentId)));
+                for (const ls of liveStudents) {
+                    if (!existingIds.has(String(ls.id))) {
+                        students.push(ls);
+                    }
+                }
             }
 
             res.json({
@@ -2547,11 +2555,15 @@ async getEnrolledStudents(req, res) {
             SELECT u.user_id AS id, u.full_name AS name, u.roll_no AS rollNo,
                 COALESCE((SELECT ROUND(AVG(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100)
                     FROM attendance a WHERE a.student_id=u.user_id AND a.classroom_id=?),0) AS attendance
-            FROM enrollments e
-            JOIN users u ON (e.student_id = u.user_id OR e.student_id = (SELECT st.student_id FROM students st WHERE st.user_id = u.user_id LIMIT 1))
-            WHERE e.classroom_id=? AND LOWER(e.status)='active'
-            GROUP BY u.user_id, u.full_name, u.roll_no
-            ORDER BY u.full_name ASC`, [classId, classId]);
+            FROM users u
+            WHERE u.user_id IN (
+                SELECT e.student_id FROM enrollments e WHERE e.classroom_id = ? AND LOWER(e.status) = 'active'
+                UNION
+                SELECT st.user_id FROM enrollments e 
+                JOIN students st ON e.student_id = st.student_id 
+                WHERE e.classroom_id = ? AND LOWER(e.status) = 'active'
+            )
+            ORDER BY u.full_name ASC`, [classId, classId, classId]);
 
         const formatted = [];
         for (const s of students) {
@@ -2889,8 +2901,16 @@ async getReportRequests(req, res) {
                         }
                     }
 
+                    const live = await this.buildLiveStudents(cls.classroom_id);
                     if (!classStudents || classStudents.length === 0) {
-                        classStudents = await this.buildLiveStudents(cls.classroom_id);
+                        classStudents = live;
+                    } else {
+                        const existingIds = new Set(classStudents.map(s => String(s.id || s.studentId)));
+                        for (const ls of live) {
+                            if (!existingIds.has(String(ls.id))) {
+                                classStudents.push(ls);
+                            }
+                        }
                     }
 
                     bundledClasses.push({
